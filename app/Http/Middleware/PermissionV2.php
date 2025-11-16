@@ -101,6 +101,8 @@ class PermissionV2
         'thu-chi/bao-cao'      => 'bao-cao-thu-chi',
         'bao-cao-quan-tri'     => 'bao-cao-quan-tri',
         'bao-cao-quan-tri/tai-chinh' => 'bao-cao-tai-chinh',
+        'bao-cao-quan-tri/khach-hang' => 'bao-cao-khach-hang',
+
 
     ];
 

@@ -61,13 +61,16 @@ class ZlOAuthController extends Controller
             return response()->json(['success' => false, 'message' => 'store state failed'], 500);
         }
 
-        // 4) Build URL v4/permission
+        // 4) Build URL v4/permission - đúng theo docs User Access Token V4
+        // https://oauth.zaloapp.com/v4/permission?app_id=<APP_ID>&redirect_uri=<CALLBACK_URL>&code_challenge=<CODE_CHALLENGE>&state=<STATE>
         $url = $oauthBase . $permission . '?' . http_build_query([
             'app_id'        => $appId,
             'redirect_uri'  => $callback,
             'code_challenge'=> $codeChallenge,
             'state'         => $state,
         ]);
+
+
 
         return response()->json([
             'success' => true,

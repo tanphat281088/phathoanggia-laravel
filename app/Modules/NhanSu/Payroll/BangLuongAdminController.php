@@ -15,26 +15,30 @@ class BangLuongAdminController extends BaseController
      * GET /nhan-su/bang-luong?user_id=&thang=YYYY-MM
      * - Xem bảng lương 1 người (quyền quản lý).
      */
-    public function adminShow(Request $request)
-    {
-        $v = Validator::make($request->all(), [
-            'user_id' => ['required', 'integer', 'min:1'],
-            'thang'   => ['nullable', 'regex:/^\d{4}\-\d{2}$/'],
-        ]);
-        if ($v->fails()) return $this->failed($v->errors(), 'VALIDATION_ERROR', 422);
+public function adminShow(Request $request)
+{
+    $v = Validator::make($request->all(), [
+        'user_id' => ['required', 'integer', 'min:1'],
+        'thang'   => ['nullable', 'regex:/^\d{4}\-\d{2}$/'],
+    ]);
+    if ($v->fails()) {
+        return $this->failed($v->errors(), 'VALIDATION_ERROR', 422);
+    }
 
-        $userId = (int) $request->input('user_id');
-        $thang  = $request->input('thang') ?: \App\Services\Timesheet\BangCongService::cycleLabelForDate(now());
+    $userId = (int) $request->input('user_id');
+    $thang  = $request->input('thang') ?: \App\Services\Timesheet\BangCongService::cycleLabelForDate(now());
 
+    try {
+        // Lấy snapshot lương hiện tại
         $row = LuongThang::query()
             ->with(['user:id,name,email'])
             ->ofUser($userId)
             ->month($thang)
             ->first();
 
+        // Lazy compute nếu chưa có
         if (!$row) {
             try {
-                // ✅ Tổng hợp BẢNG CÔNG trước cho đúng kỳ, để Payroll có dữ liệu đọc
                 /** @var \App\Services\Timesheet\BangCongService $ts */
                 $ts = app(\App\Services\Timesheet\BangCongService::class);
                 $ts->computeMonth($thang, $userId);
@@ -49,20 +53,56 @@ class BangLuongAdminController extends BaseController
                     ->month($thang)
                     ->first();
 
-                \Log::info('Payroll lazy recompute ADMIN done', ['uid' => $userId, 'thang' => $thang, 'found' => (bool)$row]);
+                \Log::info('Payroll lazy recompute ADMIN done', [
+                    'uid' => $userId,
+                    'thang' => $thang,
+                    'found' => (bool) $row,
+                ]);
             } catch (\Throwable $e) {
                 \Log::error('Payroll lazy recompute ADMIN failed', [
-                    'uid' => $userId, 'thang' => $thang, 'err' => $e->getMessage()
+                    'uid'   => $userId,
+                    'thang' => $thang,
+                    'err'   => $e->getMessage(),
                 ]);
             }
         }
 
+        // ⚠️ DEBUG: log trước khi trả về
+        \Log::info('Payroll adminShow BEFORE toApi', [
+            'uid'      => $userId,
+            'thang'    => $thang,
+            'has_row'  => (bool) $row,
+            'row_id'   => $row?->id,
+        ]);
+
+        $item = $row ? $this->toApi($row) : null;
+
+        \Log::info('Payroll adminShow OK', [
+            'uid'        => $userId,
+            'thang'      => $thang,
+            'has_item'   => (bool) $item,
+            'locked'     => $row?->locked,
+            'computed_at'=> $row?->computed_at,
+        ]);
+
         return $this->success([
             'user_id' => $userId,
             'thang'   => $thang,
-            'item'    => $row ? $this->toApi($row) : null,
+            'item'    => $item,
         ], 'ADMIN_PAYROLL');
+    } catch (\Throwable $e) {
+        \Log::error('Payroll adminShow ERROR', [
+            'uid'   => $userId,
+            'thang' => $thang,
+            'err'   => $e->getMessage(),
+            'trace' => $e->getTraceAsString(),
+        ]);
+
+        $msg = config('app.debug') ? $e->getMessage() : 'Không thể lấy bảng lương.';
+        return $this->failed(['message' => $msg], 'ADMIN_PAYROLL_ERROR', 500);
     }
+}
+
 
     /**
      * GET /nhan-su/bang-luong/list?thang=YYYY-MM&page=1&per_page=50
@@ -112,82 +152,104 @@ class BangLuongAdminController extends BaseController
 
         // HOTFIX: map an toàn để không nổ 500
         $raw = $paginator->items();
-$items = array_map(function ($r) {
-    $name = null;
-    if (isset($r->user) && $r->user) {
-        $name = $r->user->name ?? $r->user->email ?? null;
-    }
+        $items = array_map(function ($r) {
+            $name = null;
+            if (isset($r->user) && $r->user) {
+                $name = $r->user->name ?? $r->user->email ?? null;
+            }
 
-    // Decode ghi_chu (có thể là json string hoặc array)
-    $note = null;
-    if (!empty($r->ghi_chu)) {
-        if (is_string($r->ghi_chu)) {
-            try { $note = json_decode($r->ghi_chu, true, 512, JSON_THROW_ON_ERROR); }
-            catch (\Throwable $e) { $note = null; }
-        } elseif (is_array($r->ghi_chu) || $r->ghi_chu instanceof \JsonSerializable) {
-            $note = (array) $r->ghi_chu;
-        }
-    }
-    $mode        = $note['mode']        ?? null;
-    $base        = isset($note['base']) ? (int)$note['base'] : null;
-    $daily_rate  = isset($note['daily_rate']) ? (int)$note['daily_rate'] : null;
-    $cong_eff    = isset($note['cong_chuan']) ? (int)$note['cong_chuan'] : (int)$r->cong_chuan;
-    $bh_base     = isset($note['bh_base']) ? (int)$note['bh_base'] : null;
+            // Decode ghi_chu (có thể là json string hoặc array)
+            $note = null;
+            if (!empty($r->ghi_chu)) {
+                if (is_string($r->ghi_chu)) {
+                    try { $note = json_decode($r->ghi_chu, true, 512, JSON_THROW_ON_ERROR); }
+                    catch (\Throwable $e) { $note = null; }
+                } elseif (is_array($r->ghi_chu) || $r->ghi_chu instanceof \JsonSerializable) {
+                    $note = (array) $r->ghi_chu;
+                }
+            }
 
-    // P/Q/R/T/U theo quy ước Excel: U = P − Q − R − T
-    $gross = (int)$r->luong_theo_cong + (int)$r->phu_cap + (int)$r->thuong - (int)$r->phat; // P
-    $qIns  = (int)$r->bhxh + (int)$r->bhyt + (int)$r->bhtn;                                   // Q
-    $rDed  = (int)$r->khau_tru_khac;                                                          // R
-    $tAdv  = (int)$r->tam_ung;                                                                // T
-    $net   = (int)$r->thuc_nhan;                                                              // U (đã có)
+            // Các key cũ
+            $mode        = $note['mode']        ?? null;
+            $base        = isset($note['base']) ? (int)$note['base'] : null;
+            $daily_rate  = isset($note['daily_rate']) ? (int)$note['daily_rate'] : null;
+            $cong_eff    = isset($note['cong_chuan']) ? (int)$note['cong_chuan'] : (int)$r->cong_chuan;
+            $bh_base     = isset($note['bh_base']) ? (int)$note['bh_base'] : null;
 
-    return [
-        'id'              => (int) $r->id,
-        'user_id'         => (int) $r->user_id,
-        'user_name'       => $name,
-        'thang'           => (string) $r->thang,
+            // Các key mới theo phút công (nếu có)
+            $stdMinutes     = isset($note['std_minutes'])     ? (int)$note['std_minutes']     : null;
+            $actualMinutes  = isset($note['actual_minutes'])  ? (int)$note['actual_minutes']  : null;
+            $baseMinutes    = isset($note['base_minutes'])    ? (int)$note['base_minutes']    : null;
+            $otMinutes      = isset($note['ot_minutes'])      ? (int)$note['ot_minutes']      : null;
+            $unitBaseMin    = isset($note['unit_base_min'])   ? (int)$note['unit_base_min']   : null;
+            $otRatePerMin   = isset($note['ot_rate_per_min']) ? (int)$note['ot_rate_per_min'] : null;
+            $otAmount       = isset($note['ot_amount'])       ? (int)$note['ot_amount']       : null;
 
-        'luong_co_ban'    => (int) $r->luong_co_ban,
-        'cong_chuan'      => $cong_eff,
-        'he_so'           => (float) $r->he_so,
-        'so_ngay_cong'    => (float) $r->so_ngay_cong,
-        'so_gio_cong'     => (int)  $r->so_gio_cong,
+        // P/Q/R/T/U theo quy ước Excel: U = P − Q − R − T
+        $gross = (int)$r->luong_theo_cong + (int)$r->phu_cap + (int)$r->thuong - (int)$r->phat; // P
+        $qIns  = (int)$r->bhxh + (int)$r->bhyt + (int)$r->bhtn;                                 // Q
+        $rDed  = (int)$r->khau_tru_khac;                                                        // R
+        $tAdv  = (int)$r->tam_ung;                                                              // T
+        // U = max(0, P - Q - R - T) — tính lại NET để không phụ thuộc snapshot cũ
+        $net   = (int) max(0, $gross - $qIns - $rDed - $tAdv);
 
-        'luong_theo_cong' => (int)  $r->luong_theo_cong,
-        'phu_cap'         => (int)  $r->phu_cap,
-        'thuong'          => (int)  $r->thuong,
-        'phat'            => (int)  $r->phat,
 
-        'bhxh'            => (int)  $r->bhxh,
-        'bhyt'            => (int)  $r->bhyt,
-        'bhtn'            => (int)  $r->bhtn,
-        'khau_tru_khac'   => $rDed,
-        'tam_ung'         => $tAdv,
+            return [
+                'id'              => (int) $r->id,
+                'user_id'         => (int) $r->user_id,
+                'user_name'       => $name,
+                'thang'           => (string) $r->thang,
 
-        'P_gross'         => $gross,
-        'Q_insurance'     => $qIns,
-        'R_deduct_other'  => $rDed,
-        'T_advance'       => $tAdv,
-        'U_net'           => $net,
+                'luong_co_ban'    => (int) $r->luong_co_ban,
+                'cong_chuan'      => $cong_eff,
+                'he_so'           => (float) $r->he_so,
+                'so_ngay_cong'    => (float) $r->so_ngay_cong,
+                'so_gio_cong'     => (int)  $r->so_gio_cong,
 
-        // metrics phụ để hiển thị trong modal/FE
-        'metrics' => [
-            'mode'       => $mode,
-            'base'       => $base,
-            'daily_rate' => $daily_rate,
-            'bh_base'    => $bh_base,
-        ],
+                'luong_theo_cong' => (int)  $r->luong_theo_cong,
+                'phu_cap'         => (int)  $r->phu_cap,
+                'thuong'          => (int)  $r->thuong,
+                'phat'            => (int)  $r->phat,
 
-        'locked'          => (bool) $r->locked,
-        'computed_at'     => $r->computed_at ? $r->computed_at->toDateTimeString() : null,
-        'created_at'      => $r->created_at ? $r->created_at->toDateTimeString() : null,
-        'updated_at'      => $r->updated_at ? $r->updated_at->toDateTimeString() : null,
+                'bhxh'            => (int)  $r->bhxh,
+                'bhyt'            => (int)  $r->bhyt,
+                'bhtn'            => (int)  $r->bhtn,
+                'khau_tru_khac'   => $rDed,
+                'tam_ung'         => $tAdv,
+                     'thuc_nhan'       => $net,
 
-        // giữ nguyên ghi_chu (raw) để debug nếu cần
-        'ghi_chu'         => $r->ghi_chu,
-    ];
-}, $raw);
+                'P_gross'         => $gross,
+                'Q_insurance'     => $qIns,
+                'R_deduct_other'  => $rDed,
+                'T_advance'       => $tAdv,
+                'U_net'           => $net,
 
+                // metrics phụ để hiển thị trong modal/FE
+                'metrics' => [
+                    // cũ
+                    'mode'           => $mode,
+                    'base'           => $base,
+                    'daily_rate'     => $daily_rate,
+                    'bh_base'        => $bh_base,
+                    // mới theo phút công
+                    'std_minutes'    => $stdMinutes,
+                    'actual_minutes' => $actualMinutes,
+                    'base_minutes'   => $baseMinutes,
+                    'ot_minutes'     => $otMinutes,
+                    'unit_base_min'  => $unitBaseMin,
+                    'ot_rate_per_min'=> $otRatePerMin,
+                    'ot_amount'      => $otAmount,
+                ],
+
+                'locked'          => (bool) $r->locked,
+                'computed_at'     => $r->computed_at ? $r->computed_at->toDateTimeString() : null,
+                'created_at'      => $r->created_at ? $r->created_at->toDateTimeString() : null,
+                'updated_at'      => $r->updated_at ? $r->updated_at->toDateTimeString() : null,
+
+                // giữ nguyên ghi_chu (raw) để debug nếu cần
+                'ghi_chu'         => $r->ghi_chu,
+            ];
+        }, $raw);
 
         return $this->success([
             'thang'      => $thang,
@@ -246,27 +308,48 @@ $items = array_map(function ($r) {
 
 private function toApi(LuongThang $r): array
 {
-    // decode note if possible
+    // Giải mã ghi_chu (có thể là JSON string)
     $note = null;
     if (!empty($r->ghi_chu)) {
         if (is_string($r->ghi_chu)) {
-            try { $note = json_decode($r->ghi_chu, true, 512, JSON_THROW_ON_ERROR); }
-            catch (\Throwable $e) { $note = null; }
+            try {
+                $note = json_decode($r->ghi_chu, true, 512, JSON_THROW_ON_ERROR);
+            } catch (\Throwable $e) {
+                \Log::warning('Payroll toApi: decode ghi_chu failed', [
+                    'id'   => $r->id,
+                    'err'  => $e->getMessage(),
+                ]);
+                $note = null;
+            }
         } elseif (is_array($r->ghi_chu) || $r->ghi_chu instanceof \JsonSerializable) {
             $note = (array) $r->ghi_chu;
         }
     }
+
+    // các key cũ
     $mode       = $note['mode']        ?? null;
     $base       = isset($note['base']) ? (int)$note['base'] : null;
     $daily_rate = isset($note['daily_rate']) ? (int)$note['daily_rate'] : null;
     $cong_eff   = isset($note['cong_chuan']) ? (int)$note['cong_chuan'] : (int)$r->cong_chuan;
     $bh_base    = isset($note['bh_base']) ? (int)$note['bh_base'] : null;
 
+    // các key mới theo phút công
+    $stdMinutes     = isset($note['std_minutes'])     ? (int)$note['std_minutes']     : null;
+    $actualMinutes  = isset($note['actual_minutes'])  ? (int)$note['actual_minutes']  : null;
+    $baseMinutes    = isset($note['base_minutes'])    ? (int)$note['base_minutes']    : null;
+    $otMinutes      = isset($note['ot_minutes'])      ? (int)$note['ot_minutes']      : null;
+    $unitBaseMin    = isset($note['unit_base_min'])   ? (int)$note['unit_base_min']   : null;
+    $otRatePerMin   = isset($note['ot_rate_per_min']) ? (int)$note['ot_rate_per_min'] : null;
+    $otAmount       = isset($note['ot_amount'])       ? (int)$note['ot_amount']       : null;
+
+     // P/Q/R/T/U
     $gross = (int)$r->luong_theo_cong + (int)$r->phu_cap + (int)$r->thuong - (int)$r->phat; // P
-    $qIns  = (int)$r->bhxh + (int)$r->bhyt + (int)$r->bhtn;                                   // Q
-    $rDed  = (int)$r->khau_tru_khac;                                                          // R
-    $tAdv  = (int)$r->tam_ung;                                                                // T
-    $net   = (int)$r->thuc_nhan;                                                              // U
+    $qIns  = (int)$r->bhxh + (int)$r->bhyt + (int)$r->bhtn;                                 // Q
+    $rDed  = (int)$r->khau_tru_khac;                                                        // R
+    $tAdv  = (int)$r->tam_ung;                                                              // T
+    // U = max(0, P - Q - R - T)
+    $net   = (int) max(0, $gross - $qIns - $rDed - $tAdv);
+
 
     return [
         'id'              => (int)$r->id,
@@ -278,6 +361,7 @@ private function toApi(LuongThang $r): array
         'cong_chuan'      => $cong_eff,
         'he_so'           => (float)$r->he_so,
         'so_ngay_cong'    => (float)$r->so_ngay_cong,
+        // ⚠️ chắc chắn dùng đúng property, không có typo
         'so_gio_cong'     => (int)$r->so_gio_cong,
 
         'luong_theo_cong' => (int)$r->luong_theo_cong,
@@ -290,6 +374,7 @@ private function toApi(LuongThang $r): array
         'bhtn'            => (int)$r->bhtn,
         'khau_tru_khac'   => $rDed,
         'tam_ung'         => $tAdv,
+           'thuc_nhan'       => $net,
 
         // P/Q/R/T/U
         'P_gross'         => $gross,
@@ -300,10 +385,17 @@ private function toApi(LuongThang $r): array
 
         // metrics từ service (nếu có)
         'metrics' => [
-            'mode'       => $mode,
-            'base'       => $base,
-            'daily_rate' => $daily_rate,
-            'bh_base'    => $bh_base,
+            'mode'           => $mode,
+            'base'           => $base,
+            'daily_rate'     => $daily_rate,
+            'bh_base'        => $bh_base,
+            'std_minutes'    => $stdMinutes,
+            'actual_minutes' => $actualMinutes,
+            'base_minutes'   => $baseMinutes,
+            'ot_minutes'     => $otMinutes,
+            'unit_base_min'  => $unitBaseMin,
+            'ot_rate_per_min'=> $otRatePerMin,
+            'ot_amount'      => $otAmount,
         ],
 
         'locked'          => (bool)$r->locked,

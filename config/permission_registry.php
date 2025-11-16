@@ -92,7 +92,16 @@ return [
     'export'   => false,
 ]],
 
-  
+   // ===== BÁO CÁO KHÁCH HÀNG (READ-ONLY) =====
+  ['name' => 'bao-cao-khach-hang', 'actions' => [
+    'showMenu' => false, // sẽ bật true nếu muốn hiện mục riêng trên Sidebar
+    'index'    => false, // quyền xem Báo cáo khách hàng
+    'show'     => false,
+    'create'   => false,
+    'edit'     => false,
+    'delete'   => false,
+    'export'   => false,
+  ]],
   
   // ===== KIỂM TOÁN (Tra soát lệch phiếu ↔ sổ quỹ) =====
   ['name' => 'kiem-toan',          'actions' => [

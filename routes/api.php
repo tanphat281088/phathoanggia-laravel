@@ -46,6 +46,8 @@ use App\Modules\CongNoKH\CongNoKhController; // MỚI: Công nợ khách hàng (
 use App\Http\Controllers\Cash\CashAuditController;  // ⬅️ thêm dòng này
 
 use App\Http\Controllers\Reports\FinanceReportController; // NEW: Báo cáo Tài chính
+use App\Http\Controllers\Reports\CustomerReportController; // NEW: Báo cáo Khách hàng
+use App\Http\Controllers\Reports\PayrollExportController; // NEW: Export Bảng lương chi tiết
 
 
 
@@ -446,6 +448,16 @@ Route::prefix('bao-cao-quan-tri/tai-chinh')
         Route::get('/ledger',      [FinanceReportController::class, 'ledger']);      // Sổ quỹ theo tài khoản
     });
 
+      // ===== Báo cáo quản trị → Báo cáo Khách hàng (READ-ONLY) =====
+        Route::prefix('bao-cao-quan-tri/khach-hang')
+            ->middleware('perm:bao-cao-khach-hang.index') // chỉ cần quyền xem báo cáo KH
+            ->group(function () {
+                // 1 call tổng hợp KPI + chỉ số khách hàng
+                Route::get('/summary', [CustomerReportController::class, 'summary']);
+            });
+
+
+
   // ================== Quản lý giao hàng ==================
   // 3 tab: Đơn hôm nay, Lịch giao hôm nay, Lịch giao tổng
   Route::prefix('giao-hang')->group(function () {
@@ -673,6 +685,15 @@ Route::prefix('vt')->group(function () {
 });
 
 // ...
+
+
+// ===== Export Bảng lương chi tiết (CSV/HTML) — KHÔNG cần JWT =====
+// ⚠️ Nếu sau này muốn bảo vệ kỹ hơn, có thể thêm middleware token riêng.
+Route::prefix('reports')->group(function () {
+    // GET /api/reports/payroll/export?user_id=&thang=&format=csv|html
+    Route::get('/payroll/export', [PayrollExportController::class, 'exportDetail'])
+        ->name('reports.payroll.export');
+});
 
 Route::get('thu-chi/bao-cao/tong-hop', [BaoCaoThuChiController::class, 'tongHop']);
 

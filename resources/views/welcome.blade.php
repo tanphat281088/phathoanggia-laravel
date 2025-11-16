@@ -199,7 +199,7 @@
   </div>
 
   <div class="note">
-    Báo cáo được sinh tự động từ hệ thống PHG ERP. Người lập: {{ auth()->user()->name ?? '---' }}.
+    Báo cáo được sinh tự động từ hệ thống PHG Event ERP. Người lập: {{ auth()->user()->name ?? '---' }}.
   </div>
 
 </body>

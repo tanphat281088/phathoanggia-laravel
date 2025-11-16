@@ -59,25 +59,17 @@ class QuanLyBanHangService
      */
 public function getById($id)
 {
-    $data = DonHang::with('khachHang', 'chiTietDonHangs.sanPham', 'chiTietDonHangs.donViTinh')->find($id);
+    $data = DonHang::with(
+        'khachHang',
+        'chiTietDonHangs.sanPham',
+        'chiTietDonHangs.donViTinh'
+    )->find($id);
+
     if (!$data) {
         return CustomResponse::error('Dữ liệu không tồn tại');
     }
 
-    // 🔹 Gắn sẵn chuỗi hiển thị Khách hàng cho FE: "Mã KH - Tên KH - SĐT"
-    if ($data->relationLoaded('khachHang') && $data->khachHang) {
-        $kh = $data->khachHang;
-        $code  = $kh->ma_kh ?? '';
-        $name  = $kh->ten_khach_hang ?? '';
-        $phone = $kh->so_dien_thoai ?? '';
-        $label = trim(implode(' - ', array_filter([$code, $name, $phone])));
-
-        if ($label !== '') {
-            // setAttribute để nó xuất hiện trong JSON
-            $data->setAttribute('khach_hang_display', $label);
-        }
-    }
-
+    // ❌ BỎ HOÀN TOÀN đoạn setAttribute khach_hang_display ở đây
     return $data;
 }
 
@@ -351,16 +343,19 @@ if ($canOverride && $userPrice !== null) {
                 }
             }
 
-            // ⚠️ Quan trọng: KHÔNG nhận ma_don_hang từ request (BE tự sinh)
+                     // ⚠️ Quan trọng: KHÔNG nhận ma_don_hang từ request (BE tự sinh)
             $dataDonHang = $data;
             unset(
                 $dataDonHang['danh_sach_san_pham'],
                 $dataDonHang['so_tien_con_lai'],
                 $dataDonHang['ma_don_hang'],
-                 $dataDonHang['giam_gia_thanh_vien'] 
+                $dataDonHang['giam_gia_thanh_vien'],
+                $dataDonHang['khach_hang_display'],   // 🔹 thêm
+                $dataDonHang['kenh_lien_he_display']   // 🔹 thêm (nếu có)
             );
 
             $donHang = DonHang::create($dataDonHang);
+
 
             // 🔒 Fallback an toàn: nếu hook created() chưa gán mã, tự gán tại đây
             if (empty($donHang->ma_don_hang)) {
@@ -692,10 +687,13 @@ if ($canOverride && $userPrice !== null) {
                 $dataDonHang['danh_sach_san_pham'],
                 $dataDonHang['so_tien_con_lai'],
                 $dataDonHang['ma_don_hang'],
-                $dataDonHang['giam_gia_thanh_vien']
+                $dataDonHang['giam_gia_thanh_vien'],
+                $dataDonHang['khach_hang_display'],   // 🔹 thêm
+                $dataDonHang['kenh_lien_he_display']   // 🔹 thêm (nếu có)
             );
 
             $donHang->update($dataDonHang);
+
 
             // Làm mới chi tiết — chỉ khi có gửi danh_sach_san_pham
             if (isset($data['danh_sach_san_pham']) && is_array($data['danh_sach_san_pham'])) {

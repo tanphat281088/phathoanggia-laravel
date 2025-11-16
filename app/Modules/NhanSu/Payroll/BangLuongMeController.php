@@ -68,82 +68,103 @@ class BangLuongMeController extends BaseController
 
     // ===== Helpers =====
 
-private function toApi(LuongThang $r): array
-{
-    // Giải mã ghi_chu (có thể là JSON string)
-    $note = null;
-    if (!empty($r->ghi_chu)) {
-        if (is_string($r->ghi_chu)) {
-            try { $note = json_decode($r->ghi_chu, true, 512, JSON_THROW_ON_ERROR); }
-            catch (\Throwable $e) { $note = null; }
-        } elseif (is_array($r->ghi_chu) || $r->ghi_chu instanceof \JsonSerializable) {
-            $note = (array) $r->ghi_chu;
+    private function toApi(LuongThang $r): array
+    {
+        // Giải mã ghi_chu (có thể là JSON string)
+        $note = null;
+        if (!empty($r->ghi_chu)) {
+            if (is_string($r->ghi_chu)) {
+                try { $note = json_decode($r->ghi_chu, true, 512, JSON_THROW_ON_ERROR); }
+                catch (\Throwable $e) { $note = null; }
+            } elseif (is_array($r->ghi_chu) || $r->ghi_chu instanceof \JsonSerializable) {
+                $note = (array) $r->ghi_chu;
+            }
         }
-    }
 
-    $mode       = $note['mode']        ?? null;
-    $base       = isset($note['base']) ? (int)$note['base'] : null;
-    $daily_rate = isset($note['daily_rate']) ? (int)$note['daily_rate'] : null;
-    $cong_eff   = isset($note['cong_chuan']) ? (int)$note['cong_chuan'] : (int)$r->cong_chuan;
-    $bh_base    = isset($note['bh_base']) ? (int)$note['bh_base'] : null;
+        // các key cũ
+        $mode       = $note['mode']        ?? null;
+        $base       = isset($note['base']) ? (int)$note['base'] : null;
+        $daily_rate = isset($note['daily_rate']) ? (int)$note['daily_rate'] : null;
+        $cong_eff   = isset($note['cong_chuan']) ? (int)$note['cong_chuan'] : (int)$r->cong_chuan;
+        $bh_base    = isset($note['bh_base']) ? (int)$note['bh_base'] : null;
+
+        // các key mới theo phút công
+        $stdMinutes     = isset($note['std_minutes'])     ? (int)$note['std_minutes']     : null;
+        $actualMinutes  = isset($note['actual_minutes'])  ? (int)$note['actual_minutes']  : null;
+        $baseMinutes    = isset($note['base_minutes'])    ? (int)$note['base_minutes']    : null;
+        $otMinutes      = isset($note['ot_minutes'])      ? (int)$note['ot_minutes']      : null;
+        $unitBaseMin    = isset($note['unit_base_min'])   ? (int)$note['unit_base_min']   : null;
+        $otRatePerMin   = isset($note['ot_rate_per_min']) ? (int)$note['ot_rate_per_min'] : null;
+        $otAmount       = isset($note['ot_amount'])       ? (int)$note['ot_amount']       : null;
 
     // P/Q/R/T/U: U = P − Q − R − T (khớp Excel)
     $P_gross = (int)$r->luong_theo_cong + (int)$r->phu_cap + (int)$r->thuong - (int)$r->phat; // P
-    $Q_ins   = (int)$r->bhxh + (int)$r->bhyt + (int)$r->bhtn;                                   // Q
-    $R_ded   = (int)$r->khau_tru_khac;                                                          // R
-    $T_adv   = (int)$r->tam_ung;                                                                // T
-    $U_net   = (int)$r->thuc_nhan;                                                              // U (đã tính)
+    $Q_ins   = (int)$r->bhxh + (int)$r->bhyt + (int)$r->bhtn;                                 // Q
+    $R_ded   = (int)$r->khau_tru_khac;                                                        // R
+    $T_adv   = (int)$r->tam_ung;                                                              // T
+    // U = max(0, P - Q - R - T) — tính lại NET theo công thức, không phụ thuộc snapshot cũ
+    $U_net   = (int) max(0, $P_gross - $Q_ins - $R_ded - $T_adv);
 
-    return [
-        'id'              => (int)$r->id,
-        'user_id'         => (int)$r->user_id,
-        'user_name'       => $r->relationLoaded('user') && $r->user
-                              ? ($r->user->name ?? $r->user->email)
-                              : null,
-        'thang'           => (string)$r->thang,
 
-        'luong_co_ban'    => (int)$r->luong_co_ban,
-        'cong_chuan'      => $cong_eff,
-        'he_so'           => (float)$r->he_so,
+        return [
+            'id'              => (int)$r->id,
+            'user_id'         => (int)$r->user_id,
+            'user_name'       => $r->relationLoaded('user') && $r->user
+                                  ? ($r->user->name ?? $r->user->email)
+                                  : null,
+            'thang'           => (string)$r->thang,
 
-        'so_ngay_cong'    => (float)$r->so_ngay_cong,
-        'so_gio_cong'     => (int)$r->so_gio_cong,
+            'luong_co_ban'    => (int)$r->luong_co_ban,
+            'cong_chuan'      => $cong_eff,
+            'he_so'           => (float)$r->he_so,
 
-        'phu_cap'         => (int)$r->phu_cap,
-        'thuong'          => (int)$r->thuong,
-        'phat'            => (int)$r->phat,
+            'so_ngay_cong'    => (float)$r->so_ngay_cong,
+            'so_gio_cong'     => (int)$r->so_gio_cong,
 
-        'luong_theo_cong' => (int)$r->luong_theo_cong,
-        'bhxh'            => (int)$r->bhxh,
-        'bhyt'            => (int)$r->bhyt,
-        'bhtn'            => (int)$r->bhtn,
-        'khau_tru_khac'   => $R_ded,
-        'tam_ung'         => $T_adv,
+            'phu_cap'         => (int)$r->phu_cap,
+            'thuong'          => (int)$r->thuong,
+            'phat'            => (int)$r->phat,
 
-        // ===== P/Q/R/T/U =====
-        'P_gross'         => $P_gross,
-        'Q_insurance'     => $Q_ins,
-        'R_deduct_other'  => $R_ded,
-        'T_advance'       => $T_adv,
-        'U_net'           => $U_net,
+            'luong_theo_cong' => (int)$r->luong_theo_cong,
+            'bhxh'            => (int)$r->bhxh,
+            'bhyt'            => (int)$r->bhyt,
+            'bhtn'            => (int)$r->bhtn,
+            'khau_tru_khac'   => $R_ded,
+            'tam_ung'         => $T_adv,
+                'thuc_nhan'       => $U_net,
 
-        // metrics phụ để FE hiển thị chi tiết
-        'metrics' => [
-            'mode'       => $mode,
-            'base'       => $base,
-            'daily_rate' => $daily_rate,
-            'bh_base'    => $bh_base,
-        ],
+            // ===== P/Q/R/T/U =====
+            'P_gross'         => $P_gross,
+            'Q_insurance'     => $Q_ins,
+            'R_deduct_other'  => $R_ded,
+            'T_advance'       => $T_adv,
+            'U_net'           => $U_net,
 
-        'locked'          => (bool)$r->locked,
-        'computed_at'     => $r->computed_at?->toDateTimeString(),
-        'created_at'      => $r->created_at?->toDateTimeString(),
-        'updated_at'      => $r->updated_at?->toDateTimeString(),
-        // giữ nguyên ghi_chu (raw) để debug nếu cần
-        'ghi_chu'         => $r->ghi_chu,
-    ];
-}
+            // metrics phụ để FE hiển thị chi tiết
+            'metrics' => [
+                // cũ
+                'mode'           => $mode,
+                'base'           => $base,
+                'daily_rate'     => $daily_rate,
+                'bh_base'        => $bh_base,
+                // mới theo phút công
+                'std_minutes'    => $stdMinutes,
+                'actual_minutes' => $actualMinutes,
+                'base_minutes'   => $baseMinutes,
+                'ot_minutes'     => $otMinutes,
+                'unit_base_min'  => $unitBaseMin,
+                'ot_rate_per_min'=> $otRatePerMin,
+                'ot_amount'      => $otAmount,
+            ],
 
+            'locked'          => (bool)$r->locked,
+            'computed_at'     => $r->computed_at?->toDateTimeString(),
+            'created_at'      => $r->created_at?->toDateTimeString(),
+            'updated_at'      => $r->updated_at?->toDateTimeString(),
+            // giữ nguyên ghi_chu (raw) để debug nếu cần
+            'ghi_chu'         => $r->ghi_chu,
+        ];
+    }
 
     // --- Response helpers ---
     private function success($data = [], string $code = 'OK', int $status = 200)

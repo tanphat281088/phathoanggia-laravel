@@ -8,6 +8,8 @@ use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Log;
+use App\Jobs\Zl\RefreshZlTokenJob;
+
 
 return Application::configure(basePath: dirname(__DIR__))
   ->withRouting(
@@ -36,5 +38,10 @@ return Application::configure(basePath: dirname(__DIR__))
   ->withSchedule(function (Schedule $schedule) {
     // Xoá ảnh không sử dụng
     $schedule->command('images:clean')->everyThirtyMinutes()->withoutOverlapping();
+        // ✅ Tự động refresh Zalo OA token mỗi 5 phút
+    $schedule->job(new RefreshZlTokenJob())
+        ->everyFiveMinutes()
+        ->withoutOverlapping();
+
   })
   ->create();

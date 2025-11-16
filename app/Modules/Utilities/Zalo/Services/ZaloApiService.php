@@ -62,8 +62,7 @@ class ZaloApiService
     {
         $sendUrl = (string) env('ZL_SEND_URL', ''); // ví dụ: https://openapi.zalo.me/v3.0/oa/message/cs
 
-        // ✅ Nếu .env có ZL_OA_ACCESS_TOKEN thì ưu tiên dùng
-        $accessToken = env('ZL_OA_ACCESS_TOKEN', $accessToken);
+
 
         $authName = (string) env('ZL_SEND_AUTH_HEADER', 'access_token');
 
