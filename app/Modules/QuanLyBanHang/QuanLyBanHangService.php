@@ -12,8 +12,6 @@ use App\Models\SanPham;
 use Exception;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
-use App\Models\DonViTinhSanPham;
-
 
 class QuanLyBanHangService
 {
@@ -57,22 +55,20 @@ class QuanLyBanHangService
     /**
      * Lấy dữ liệu theo ID
      */
-public function getById($id)
-{
-    $data = DonHang::with(
-        'khachHang',
-        'chiTietDonHangs.sanPham',
-        'chiTietDonHangs.donViTinh'
-    )->find($id);
+    public function getById($id)
+    {
+        $data = DonHang::with(
+            'khachHang',
+            'chiTietDonHangs.sanPham',
+            'chiTietDonHangs.donViTinh'
+        )->find($id);
 
-    if (!$data) {
-        return CustomResponse::error('Dữ liệu không tồn tại');
+        if (! $data) {
+            return CustomResponse::error('Dữ liệu không tồn tại');
+        }
+
+        return $data;
     }
-
-    // ❌ BỎ HOÀN TOÀN đoạn setAttribute khach_hang_display ở đây
-    return $data;
-}
-
 
     /**
      * Chuẩn hoá thanh toán theo loại thanh toán (an toàn dữ liệu)
@@ -101,6 +97,7 @@ public function getById($id)
 
         // Dẫn xuất "còn lại" để quyết định trạng thái (không lưu DB)
         $conLai = max(0, $tongTienCanThanhToan - $daTT);
+
         /**
          * 0 = chưa thanh toán
          * 1 = thanh toán một phần
@@ -114,14 +111,11 @@ public function getById($id)
             $data['trang_thai_thanh_toan'] = 2;
         }
 
-        // Phòng thủ
         unset($data['so_tien_con_lai']);
     }
 
     /**
      * Chuẩn hoá thông tin người nhận (Tên/SĐT/Ngày giờ nhận)
-     * - Không bắt buộc 3 field này; chỉ xử lý khi có
-     * - Ngày giờ nhận: nhận mọi định dạng hợp lệ và chuẩn hoá 'Y-m-d H:i:s'
      */
     private function normalizeRecipientFields(array &$data): void
     {
@@ -150,91 +144,86 @@ public function getById($id)
     }
 
     /**
-     * Tạo mới dữ liệu
+     * Tạo mới dữ liệu (BÁO GIÁ SỰ KIỆN)
      */
     public function create(array $data)
     {
         DB::beginTransaction();
+
         try {
             $tongTienHang = 0;
 
+            // ===== GIÁ DỊCH VỤ: ƯU TIÊN don_gia, fallback gia_nhap_mac_dinh =====
             foreach ($data['danh_sach_san_pham'] as $index => $item) {
+                $soLuong = (int)($item['so_luong'] ?? 0);
+                if ($soLuong <= 0) {
+                    throw new Exception('Số lượng dịch vụ phải > 0');
+                }
 
+                $userPrice = isset($item['don_gia']) ? (int)$item['don_gia'] : null;
 
-                // ✅ Ghi lại loại giá (default 1 nếu thiếu từ FE)
-                $data['danh_sach_san_pham'][$index]['loai_gia'] = $item['loai_gia'] ?? 1;
+                $sanPham = SanPham::find($item['san_pham_id'] ?? null);
+                if (! $sanPham && $userPrice === null) {
+                    throw new Exception('Dịch vụ ID ' . ($item['san_pham_id'] ?? 'NULL') . ' không tồn tại');
+                }
 
-// ====== BEGIN: OVERRIDE PRICE (3 MÃ WHITELIST) + PREPARE SYNC ======
-static $OVERRIDE_CODES = ['KG00001', 'KG00002', 'MO00001'];
+                if ($userPrice !== null && $userPrice >= 0) {
+                    $usedPrice = $userPrice;
+                } else {
+                    $usedPrice = (int)($sanPham->gia_nhap_mac_dinh ?? 0);
+                }
 
-// Lưu override để đồng bộ về san_phams sau khi lưu đơn
-$priceSync = $priceSync ?? [];
+                if ($usedPrice < 0) {
+                    $usedPrice = 0;
+                }
 
-$sanPham = SanPham::find($item['san_pham_id']);
-if (!$sanPham) {
-    throw new Exception('Sản phẩm ' . $item['san_pham_id'] . ' không tồn tại');
-}
+                $data['danh_sach_san_pham'][$index]['don_gia']    = $usedPrice;
+                $data['danh_sach_san_pham'][$index]['thanh_tien'] = $soLuong * $usedPrice;
+    // ===== SECTION & COST cho báo giá sự kiện =====
 
-$code        = strtoupper((string)($sanPham->ma_san_pham ?? ''));
-$canOverride = in_array($code, $OVERRIDE_CODES, true);
-$userPrice   = isset($item['don_gia']) ? (int)$item['don_gia'] : null;
+    // SECTION_CODE:
+    // Ưu tiên: payload gửi lên (danh_sach_san_pham.*.section_code),
+    // nếu không có thì lấy group_code từ danh mục dịch vụ (danhMuc.group_code).
+    $sectionCode = $item['section_code'] ?? null;
+    if ($sectionCode === null && $sanPham && $sanPham->danhMuc) {
+        $sectionCode = $sanPham->danhMuc->group_code; // A/B/C/D
+    }
+    $data['danh_sach_san_pham'][$index]['section_code'] = $sectionCode;
 
-
-// Ưu tiên override khi thoả điều kiện
-if ($canOverride && $userPrice !== null) {
-    $usedPrice = max(0, $userPrice);
-
-    // Ghi vào chi tiết
-    $data['danh_sach_san_pham'][$index]['don_gia']    = $usedPrice;
-    $data['danh_sach_san_pham'][$index]['thanh_tien'] = (int)$item['so_luong'] * $usedPrice;
-
-    // Gom để sync về san_phams và đảm bảo mapping DVT
-    $priceSync[] = [
-        'san_pham_id'    => (int)$item['san_pham_id'],
-        'don_vi_tinh_id' => (int)$item['don_vi_tinh_id'],
-        'loai_gia'       => (int)$data['danh_sach_san_pham'][$index]['loai_gia'],
-        'price'          => $usedPrice,
-        'override'       => true,
-    ];
-} else {
-    // Hành vi cũ: ưu tiên giá theo lô; nếu không có lô → lấy từ SanPham
-    $loSanPham = ChiTietPhieuNhapKho::where('san_pham_id', $item['san_pham_id'])
-        ->where('don_vi_tinh_id', $item['don_vi_tinh_id'])
-        ->orderBy('id', 'asc')
-        ->first();
-
-    if ($loSanPham) {
-        $usedPrice = (int)$loSanPham->gia_ban_le_don_vi;
+    // TITLE:
+    // Ưu tiên: payload gửi title riêng cho dòng,
+    // nếu không thì dùng tên dịch vụ.
+    if (isset($item['title']) && $item['title'] !== '') {
+        $data['danh_sach_san_pham'][$index]['title'] = $item['title'];
     } else {
-        $usedPrice = (int)(((int)($data['danh_sach_san_pham'][$index]['loai_gia'] ?? 1) === 2)
-            ? ($sanPham->gia_dat_truoc_3n ?? 0)
-            : ($sanPham->gia_nhap_mac_dinh ?? 0));
+        $data['danh_sach_san_pham'][$index]['title'] = $sanPham ? $sanPham->ten_san_pham : null;
     }
 
-    $data['danh_sach_san_pham'][$index]['don_gia']    = $usedPrice;
-    $data['danh_sach_san_pham'][$index]['thanh_tien'] = (int)$item['so_luong'] * $usedPrice;
+    // DESCRIPTION:
+    // Cho phép FE gửi mô tả chi tiết (nếu không gửi thì để null).
+    if (isset($item['description']) && $item['description'] !== '') {
+        $data['danh_sach_san_pham'][$index]['description'] = $item['description'];
+    }
 
-    // Vẫn push để đảm bảo mapping DVT ở bước sau
-    $priceSync[] = [
-        'san_pham_id'    => (int)$item['san_pham_id'],
-        'don_vi_tinh_id' => (int)$item['don_vi_tinh_id'],
-        'loai_gia'       => (int)$data['danh_sach_san_pham'][$index]['loai_gia'],
-        'price'          => $usedPrice,
-        'override'       => false,
-    ];
-}
-// Cộng dồn tổng
+    // BASE COST & COST AMOUNT:
+    // base_cost: giá vốn (mặc định = gia_nhap_mac_dinh, FE có thể override).
+    $baseCost = isset($item['base_cost'])
+        ? (int)$item['base_cost']
+        : (int)($sanPham->gia_nhap_mac_dinh ?? 0);
 
-// ====== END: OVERRIDE PRICE + PREPARE SYNC ======
+    if ($baseCost < 0) {
+        $baseCost = 0;
+    }
+
+    $data['danh_sach_san_pham'][$index]['base_cost']   = $baseCost;
+    $data['danh_sach_san_pham'][$index]['cost_amount'] = $baseCost * $soLuong;
 
                 $tongTienHang += (int)$data['danh_sach_san_pham'][$index]['thanh_tien'];
             }
 
             // ===== GIẢM GIÁ: THỦ CÔNG + THÀNH VIÊN =====
-            // Giảm giá thủ công (VNĐ)
             $manualDiscount = (int)($data['giam_gia'] ?? 0);
 
-            // Mặc định không áp dụng giảm giá thành viên
             $memberPercent = 0.0;
 
             // Chỉ xét giảm giá thành viên khi:
@@ -243,15 +232,20 @@ if ($canOverride && $userPrice !== null) {
             $loaiKh = (int)($data['loai_khach_hang'] ?? 0);
             $khId   = $data['khach_hang_id'] ?? null;
 
-            // Mặc định: khách thường (0)
-            $customerMode = 0;
-            if (!empty($khId)) {
-                $khTmp = \App\Models\KhachHang::find($khId);
-                $customerMode = (int)($khTmp->customer_mode ?? 0);
+            $khTmp    = null;
+            $isSystem = false;
+            $isAgency = false;
+
+            if (! empty($khId)) {
+                $khTmp = KhachHang::find($khId);
+                if ($khTmp) {
+                    $isSystem = (bool) $khTmp->is_system_customer;
+                    $isAgency = ($khTmp->customer_type === KhachHang::TYPE_AGENCY);
+                }
             }
 
-            // Chỉ KH hệ thống THƯỜNG (customer_mode = 0) mới được giảm giá thành viên
-            if ($loaiKh === 0 && !empty($khId) && $customerMode === 0) {
+            // Chỉ KH hệ thống, KHÔNG phải Agency mới được giảm giá thành viên
+            if ($loaiKh === 0 && $khTmp && $isSystem && ! $isAgency) {
                 if (array_key_exists('giam_gia_thanh_vien', $data)
                     && $data['giam_gia_thanh_vien'] !== null
                     && $data['giam_gia_thanh_vien'] !== ''
@@ -264,28 +258,20 @@ if ($canOverride && $userPrice !== null) {
                     }
                 }
             } else {
-                // KH vãng lai hoặc KH Pass/CTV → luôn 0%
                 $memberPercent = 0.0;
             }
 
-            // Tiền giảm giá thành viên = % × tổng tiền hàng
             $memberAmount = (int) round($tongTienHang * $memberPercent / 100);
-
-
-            // Tổng giảm giá thực tế = thủ công + thành viên
             $totalDiscount = $manualDiscount + $memberAmount;
 
-            // Chi phí vận chuyển
             $chiPhi  = (int)($data['chi_phi'] ?? 0);
 
-            // ===== VAT-AWARE TOTALS (TƯƠNG THÍCH NGƯỢC) =====
+            // ===== VAT-AWARE TOTALS =====
             $taxMode = (int)($data['tax_mode'] ?? 0);
             $vatRate = array_key_exists('vat_rate', $data) ? (float)$data['vat_rate'] : null;
 
-            // 1) Subtotal = Tổng hàng - Giảm (thủ công + thành viên) + Chi phí
             $subtotal = max(0, (int)$tongTienHang - $totalDiscount + $chiPhi);
 
-            // 2) VAT
             if ($taxMode === 1 && $vatRate !== null) {
                 $vatAmount  = (int) round($subtotal * $vatRate / 100, 0);
                 $grandTotal = $subtotal + $vatAmount;
@@ -296,31 +282,27 @@ if ($canOverride && $userPrice !== null) {
                 $grandTotal = $subtotal;
             }
 
-            // 3) Tổng cần thanh toán
             $tongTienCanThanhToan = (int) $grandTotal;
 
-            // Chuẩn hoá thanh toán theo tổng mới
             $this->normalizePayments($data, $tongTienCanThanhToan);
 
-            // 4) Ghi vào $data cho DonHang (NULL khi không thuế để không phá report cũ)
-            $data['tax_mode']   = $taxMode;
-            $data['vat_rate']   = $vatRate;
-            $data['subtotal']   = ($taxMode === 1) ? (int)$subtotal : null;
-            $data['vat_amount'] = ($taxMode === 1) ? (int)$vatAmount : null;
-            $data['grand_total']= ($taxMode === 1) ? (int)$grandTotal : null;
+            $data['tax_mode']    = $taxMode;
+            $data['vat_rate']    = $vatRate;
+            $data['subtotal']    = ($taxMode === 1) ? (int)$subtotal : null;
+            $data['vat_amount']  = ($taxMode === 1) ? (int)$vatAmount : null;
+            $data['grand_total'] = ($taxMode === 1) ? (int)$grandTotal : null;
 
-            // 🔹 Lưu snapshot giảm giá thành viên xuống DB
             $data['member_discount_percent'] = (int)$memberPercent;
             $data['member_discount_amount']  = $memberAmount;
-            // (giam_gia_thanh_vien là field FE gửi, DB không có cột nên không cần xoá)
 
-
-            // ✅ Chuẩn hoá thông tin người nhận (Tên/SĐT/Ngày giờ nhận)
             $this->normalizeRecipientFields($data);
 
-            // ===== NEW: Chuẩn hoá trạng thái đơn hàng (0=Chưa giao,1=Đang giao,2=Đã giao,3=Đã hủy) =====
-            if (!array_key_exists('trang_thai_don_hang', $data) || $data['trang_thai_don_hang'] === null || $data['trang_thai_don_hang'] === '') {
-                $data['trang_thai_don_hang'] = DonHang::TRANG_THAI_CHUA_GIAO; // default = 0
+            // Trạng thái đơn hàng (giao hàng)
+            if (! array_key_exists('trang_thai_don_hang', $data)
+                || $data['trang_thai_don_hang'] === null
+                || $data['trang_thai_don_hang'] === ''
+            ) {
+                $data['trang_thai_don_hang'] = DonHang::TRANG_THAI_CHUA_GIAO;
             } else {
                 $v = (int)$data['trang_thai_don_hang'];
                 $data['trang_thai_don_hang'] = in_array($v, [
@@ -331,33 +313,31 @@ if ($canOverride && $userPrice !== null) {
                 ], true) ? $v : DonHang::TRANG_THAI_CHUA_GIAO;
             }
 
-            $data['tong_tien_hang'] = (int)$tongTienHang;
-            $data['tong_tien_can_thanh_toan'] = (int)$tongTienCanThanhToan;
-            $data['tong_so_luong_san_pham'] = count($data['danh_sach_san_pham']);
+            $data['tong_tien_hang']             = (int)$tongTienHang;
+            $data['tong_tien_can_thanh_toan']   = (int)$tongTienCanThanhToan;
+            $data['tong_so_luong_san_pham']     = count($data['danh_sach_san_pham']);
 
             if (isset($data['khach_hang_id']) && $data['khach_hang_id'] != null) {
                 $khachHang = KhachHang::find($data['khach_hang_id']);
                 if ($khachHang) {
                     $data['ten_khach_hang'] = $khachHang->ten_khach_hang;
-                    $data['so_dien_thoai'] = $khachHang->so_dien_thoai;
+                    $data['so_dien_thoai']  = $khachHang->so_dien_thoai;
                 }
             }
 
-                     // ⚠️ Quan trọng: KHÔNG nhận ma_don_hang từ request (BE tự sinh)
+            // ⚠️ KHÔNG nhận ma_don_hang từ request (BE tự sinh)
             $dataDonHang = $data;
             unset(
                 $dataDonHang['danh_sach_san_pham'],
                 $dataDonHang['so_tien_con_lai'],
                 $dataDonHang['ma_don_hang'],
                 $dataDonHang['giam_gia_thanh_vien'],
-                $dataDonHang['khach_hang_display'],   // 🔹 thêm
-                $dataDonHang['kenh_lien_he_display']   // 🔹 thêm (nếu có)
+                $dataDonHang['khach_hang_display'],
+                $dataDonHang['kenh_lien_he_display']
             );
 
             $donHang = DonHang::create($dataDonHang);
 
-
-            // 🔒 Fallback an toàn: nếu hook created() chưa gán mã, tự gán tại đây
             if (empty($donHang->ma_don_hang)) {
                 $donHang->ma_don_hang = 'DH' . str_pad((string)$donHang->id, 5, '0', STR_PAD_LEFT);
                 $donHang->saveQuietly();
@@ -365,40 +345,14 @@ if ($canOverride && $userPrice !== null) {
 
             foreach ($data['danh_sach_san_pham'] as $item) {
                 $item['don_hang_id'] = $donHang->id;
+
+                // chi_tiet_don_hangs không còn cột loai_gia
+                if (array_key_exists('loai_gia', $item)) {
+                    unset($item['loai_gia']);
+                }
+
                 ChiTietDonHang::create($item);
             }
-
-// ====== BEGIN: SYNC BACK TO san_phams + ENSURE DVT MAPPING ======
-if (!empty($priceSync)) {
-    foreach ($priceSync as $p) {
-        // (1) Đảm bảo có mapping đơn vị tính cho SP/DVT
-        if (!empty($p['san_pham_id']) && !empty($p['don_vi_tinh_id'])) {
-            DonViTinhSanPham::firstOrCreate([
-                'san_pham_id'    => (int)$p['san_pham_id'],
-                'don_vi_tinh_id' => (int)$p['don_vi_tinh_id'],
-            ]);
-        }
-
-        // (2) Chỉ sync giá khi thực sự override (3 mã whitelist)
-        if (!empty($p['override'])) {
-            /** @var \App\Models\SanPham|null $sp */
-            $sp = SanPham::find((int)$p['san_pham_id']);
-            if ($sp) {
-                if ((int)$p['loai_gia'] === 2) {
-                    // 2 = Đặt trước 3 ngày
-                    $sp->gia_dat_truoc_3n = (int)$p['price'];
-                } else {
-                    // 1 = Đặt ngay
-                    $sp->gia_nhap_mac_dinh = (int)$p['price'];
-                }
-                $sp->saveQuietly();
-            }
-        }
-    }
-}
-// ====== END: SYNC BACK ======
-
-
 
             DB::commit();
             return $donHang->refresh();
@@ -414,23 +368,15 @@ if (!empty($priceSync)) {
     public function update($id, array $data)
     {
         DB::beginTransaction();
+
         $donHang = $this->getById($id);
 
-        // ⛔️ GỠ CHẶN: cho phép cập nhật dù đã có phiếu thu.
-        // Observer DonHang sẽ tự sinh PHIẾU HIỆU CHỈNH để cân đối → không cần chặn ở đây。
-
-        // ===== RULE LOCKING: quyết định trường nào được phép sửa =====
-        $isDelivered       = (int)$donHang->trang_thai_don_hang === DonHang::TRANG_THAI_DA_GIAO; // 2
+        $isDelivered       = (int)$donHang->trang_thai_don_hang === DonHang::TRANG_THAI_DA_GIAO;
         $isPaidFull        = (int)$donHang->trang_thai_thanh_toan === 2
                              || (int)$donHang->so_tien_da_thanh_toan >= (int)$donHang->tong_tien_can_thanh_toan;
         $isOlderThan10Days = Carbon::parse($donHang->ngay_tao_don_hang)->diffInDays(Carbon::now()) > 10;
 
-        // Ưu tiên: (1) đã giao & đã thanh toán đủ → khoá toàn bộ
-        //          (2) đã giao → chỉ cho sửa thanh toán + ghi chú
-        //          (3) >10 ngày → chỉ cho sửa: trạng thái, giờ nhận, thanh toán, ghi chú,
-        //                         và ĐỊA CHỈ khi CHƯA giao
-        //          (4) còn lại → không giới hạn
-        $allowed = null; // null = không giới hạn
+        $allowed = null;
         if ($isDelivered && $isPaidFull) {
             return CustomResponse::error('Đơn đã giao và đã thanh toán đủ — khoá toàn bộ chỉnh sửa.', 422);
         } elseif ($isDelivered) {
@@ -443,18 +389,16 @@ if (!empty($priceSync)) {
                 'so_tien_da_thanh_toan',
                 'ghi_chu',
             ];
-            if (!$isDelivered) {
+            if (! $isDelivered) {
                 $allowed[] = 'dia_chi_giao_hang';
             }
         }
 
-        // Nếu có whitelist → chỉ giữ các key hợp lệ
         if (is_array($allowed)) {
             $data = array_intersect_key($data, array_flip($allowed));
         }
 
         try {
-            // ===== Chỉ tái tính tiền/hàng nếu payload có các field liên quan =====
             $allowMoneyRecalc = array_key_exists('danh_sach_san_pham', $data)
                              || array_key_exists('giam_gia', $data)
                              || array_key_exists('chi_phi', $data)
@@ -464,88 +408,78 @@ if (!empty($priceSync)) {
             if ($allowMoneyRecalc) {
                 $tongTienHang = 0;
 
-                    $priceSync = $priceSync ?? [];
-
-
                 foreach ($data['danh_sach_san_pham'] as $index => $item) {
+                    $soLuong = (int)($item['so_luong'] ?? 0);
+                    if ($soLuong <= 0) {
+                        throw new Exception('Số lượng dịch vụ phải > 0');
+                    }
 
+                    $userPrice = isset($item['don_gia']) ? (int)$item['don_gia'] : null;
 
-                    // ✅ Ghi lại loại giá khi cập nhật (default 1 nếu thiếu)
-                    $data['danh_sach_san_pham'][$index]['loai_gia'] = $item['loai_gia'] ?? 1;
+                    $sanPham = SanPham::find($item['san_pham_id'] ?? null);
+                    if (! $sanPham && $userPrice === null) {
+                        throw new Exception('Dịch vụ ID ' . ($item['san_pham_id'] ?? 'NULL') . ' không tồn tại');
+                    }
 
-// ====== BEGIN: OVERRIDE PRICE (3 MÃ WHITELIST) + PREPARE SYNC ======
-static $OVERRIDE_CODES = ['KG00001', 'KG00002', 'MO00001'];
+                    if ($userPrice !== null && $userPrice >= 0) {
+                        $usedPrice = $userPrice;
+                    } else {
+                        $usedPrice = (int)($sanPham->gia_nhap_mac_dinh ?? 0);
+                    }
 
-$sanPham = SanPham::find($item['san_pham_id']);
-if (!$sanPham) {
-    throw new Exception('Sản phẩm ' . $item['san_pham_id'] . ' không tồn tại');
-}
+                    if ($usedPrice < 0) {
+                        $usedPrice = 0;
+                    }
 
-$code        = strtoupper((string)($sanPham->ma_san_pham ?? ''));
-$canOverride = in_array($code, $OVERRIDE_CODES, true);
-$userPrice   = isset($item['don_gia']) ? (int)$item['don_gia'] : null;
+                    $data['danh_sach_san_pham'][$index]['don_gia']    = $usedPrice;
+                    $data['danh_sach_san_pham'][$index]['thanh_tien'] = $soLuong * $usedPrice;
+                            $data['danh_sach_san_pham'][$index]['don_gia']    = $usedPrice;
+        $data['danh_sach_san_pham'][$index]['thanh_tien'] = $soLuong * $usedPrice;
 
+        // ===== SECTION & COST cho báo giá sự kiện =====
 
+        $sectionCode = $item['section_code'] ?? null;
+        if ($sectionCode === null && $sanPham && $sanPham->danhMuc) {
+            $sectionCode = $sanPham->danhMuc->group_code;
+        }
+        $data['danh_sach_san_pham'][$index]['section_code'] = $sectionCode;
 
-if ($canOverride && $userPrice !== null) {
-    // ✅ Tôn trọng giá nhập tay cho 3 mã whitelist
-    $usedPrice = max(0, $userPrice);
+        if (isset($item['title']) && $item['title'] !== '') {
+            $data['danh_sach_san_pham'][$index]['title'] = $item['title'];
+        } else {
+            $data['danh_sach_san_pham'][$index]['title'] = $sanPham ? $sanPham->ten_san_pham : null;
+        }
 
-    $data['danh_sach_san_pham'][$index]['don_gia']    = $usedPrice;
-    $data['danh_sach_san_pham'][$index]['thanh_tien'] = (int)$item['so_luong'] * $usedPrice;
+        if (isset($item['description']) && $item['description'] !== '') {
+            $data['danh_sach_san_pham'][$index]['description'] = $item['description'];
+        }
 
-    // Gom để sync về san_phams và đảm bảo mapping DVT
-    $priceSync[] = [
-        'san_pham_id'    => (int)$item['san_pham_id'],
-        'don_vi_tinh_id' => (int)$item['don_vi_tinh_id'],
-        'loai_gia'       => (int)$data['danh_sach_san_pham'][$index]['loai_gia'],
-        'price'          => $usedPrice,
-        'override'       => true,
-    ];
-} else {
-    // Hành vi cũ: ưu tiên giá theo lô; nếu không có lô → lấy từ SanPham theo loai_gia
-    $loSanPham = ChiTietPhieuNhapKho::where('san_pham_id', $item['san_pham_id'])
-        ->where('don_vi_tinh_id', $item['don_vi_tinh_id'])
-        ->orderBy('id', 'asc')
-        ->first();
+        $baseCost = isset($item['base_cost'])
+            ? (int)$item['base_cost']
+            : (int)($sanPham->gia_nhap_mac_dinh ?? 0);
 
-    if ($loSanPham) {
-        $usedPrice = (int)$loSanPham->gia_ban_le_don_vi;
-    } else {
-        $usedPrice = (int)(((int)($data['danh_sach_san_pham'][$index]['loai_gia'] ?? 1) === 2)
-            ? ($sanPham->gia_dat_truoc_3n ?? 0)
-            : ($sanPham->gia_nhap_mac_dinh ?? 0));
-    }
+        if ($baseCost < 0) {
+            $baseCost = 0;
+        }
 
-    $data['danh_sach_san_pham'][$index]['don_gia']    = $usedPrice;
-    $data['danh_sach_san_pham'][$index]['thanh_tien'] = (int)$item['so_luong'] * $usedPrice;
+        $data['danh_sach_san_pham'][$index]['base_cost']   = $baseCost;
+        $data['danh_sach_san_pham'][$index]['cost_amount'] = $baseCost * $soLuong;
 
-    // Vẫn push để đảm bảo mapping DVT ở bước SYNC
-    $priceSync[] = [
-        'san_pham_id'    => (int)$item['san_pham_id'],
-        'don_vi_tinh_id' => (int)$item['don_vi_tinh_id'],
-        'loai_gia'       => (int)$data['danh_sach_san_pham'][$index]['loai_gia'],
-        'price'          => $usedPrice,
-        'override'       => false,
-    ];
-}
-// ====== END: OVERRIDE PRICE + PREPARE SYNC ======
+        $tongTienHang += (int)$data['danh_sach_san_pham'][$index]['thanh_tien'];
+
 
                     $tongTienHang += (int)$data['danh_sach_san_pham'][$index]['thanh_tien'];
                 }
 
-                 // ===== GIẢM GIÁ: THỦ CÔNG + THÀNH VIÊN (UPDATE) =====
-                // Lấy giảm giá thủ công: nếu payload có thì dùng, không thì giữ theo DB
+                // ===== GIẢM GIÁ: THỦ CÔNG + THÀNH VIÊN (UPDATE) =====
                 $manualDiscount = array_key_exists('giam_gia', $data)
                     ? (int)$data['giam_gia']
                     : (int)($donHang->giam_gia ?? 0);
 
-                // Lấy chi phí: nếu payload có thì dùng, không thì giữ theo DB
                 $chiPhi = array_key_exists('chi_phi', $data)
                     ? (int)$data['chi_phi']
                     : (int)($donHang->chi_phi ?? 0);
 
-                // Xác định loại KH & id KH hiện tại (ưu tiên payload, fallback DB)
                 $loaiKh = array_key_exists('loai_khach_hang', $data)
                     ? (int)$data['loai_khach_hang']
                     : (int)($donHang->loai_khach_hang ?? 0);
@@ -554,31 +488,32 @@ if ($canOverride && $userPrice !== null) {
                     ? $data['khach_hang_id']
                     : $donHang->khach_hang_id;
 
-                // Mặc định không áp dụng giảm giá thành viên
                 $memberPercent = 0.0;
 
-                // Mặc định: khách thường (0)
-                $customerMode = 0;
-                if (!empty($khId)) {
-                    // Nếu vẫn là cùng KH với đơn hiện tại và đã load quan hệ, tận dụng cho nhanh
+                $khTmp    = null;
+                $isSystem = false;
+                $isAgency = false;
+
+                if (! empty($khId)) {
                     if ($donHang->khach_hang_id == $khId && $donHang->relationLoaded('khachHang')) {
-                        $customerMode = (int)($donHang->khachHang->customer_mode ?? 0);
+                        $khTmp = $donHang->khachHang;
                     } else {
-                        $khTmp = \App\Models\KhachHang::find($khId);
-                        $customerMode = (int)($khTmp->customer_mode ?? 0);
+                        $khTmp = KhachHang::find($khId);
+                    }
+
+                    if ($khTmp) {
+                        $isSystem = (bool) $khTmp->is_system_customer;
+                        $isAgency = ($khTmp->customer_type === KhachHang::TYPE_AGENCY);
                     }
                 }
 
-                // Chỉ KH hệ thống THƯỜNG (customer_mode = 0) mới được giảm giá thành viên
-                if ($loaiKh === 0 && !empty($khId) && $customerMode === 0) {
+                if ($loaiKh === 0 && $khTmp && $isSystem && ! $isAgency) {
                     if (array_key_exists('giam_gia_thanh_vien', $data)
                         && $data['giam_gia_thanh_vien'] !== null
                         && $data['giam_gia_thanh_vien'] !== ''
                     ) {
-                        // Payload có gửi % mới
                         $memberPercent = (float)$data['giam_gia_thanh_vien'];
                     } else {
-                        // Không gửi mới → giữ theo DB
                         $memberPercent = (float)($donHang->member_discount_percent ?? 0);
                     }
 
@@ -588,19 +523,13 @@ if ($canOverride && $userPrice !== null) {
                         $memberPercent = 100;
                     }
                 } else {
-                    // KH vãng lai hoặc KH Pass/CTV → luôn 0% (đồng thời xoá discount cũ nếu có)
                     $memberPercent = 0.0;
                 }
 
-                // Tiền giảm giá thành viên = % × tổng tiền hàng
                 $memberAmount = (int) round($tongTienHang * $memberPercent / 100);
 
-
-                // Tổng giảm giá thực tế = thủ công + thành viên
                 $totalDiscount = $manualDiscount + $memberAmount;
 
-                // ===== VAT-AWARE TOTALS (TƯƠNG THÍCH NGƯỢC) =====
-                // Thuế: nếu payload có thì dùng, không thì lấy theo DB
                 $taxMode = array_key_exists('tax_mode', $data)
                     ? (int)$data['tax_mode']
                     : (int)($donHang->tax_mode ?? 0);
@@ -609,10 +538,8 @@ if ($canOverride && $userPrice !== null) {
                     ? (float)$data['vat_rate']
                     : ($donHang->vat_rate !== null ? (float)$donHang->vat_rate : null);
 
-                // 1) Subtotal = Tổng hàng - Giảm (thủ công + thành viên) + Chi phí
                 $subtotal = max(0, (int)$tongTienHang - $totalDiscount + $chiPhi);
 
-                // 2) VAT
                 if ($taxMode === 1 && $vatRate !== null) {
                     $vatAmount  = (int) round($subtotal * $vatRate / 100, 0);
                     $grandTotal = $subtotal + $vatAmount;
@@ -623,41 +550,31 @@ if ($canOverride && $userPrice !== null) {
                     $grandTotal = $subtotal;
                 }
 
-                // 3) Tổng cần thanh toán
                 $tongTienCanThanhToan = (int) $grandTotal;
 
-                // Chuẩn hoá thanh toán theo tổng mới
                 $this->normalizePayments($data, $tongTienCanThanhToan);
 
-                // Tổng hợp trường tổng
                 $data['tong_tien_hang']           = (int)$tongTienHang;
                 $data['tong_tien_can_thanh_toan'] = (int)$tongTienCanThanhToan;
                 $data['tong_so_luong_san_pham']   = isset($data['danh_sach_san_pham'])
                     ? count($data['danh_sach_san_pham'])
                     : $donHang->tong_so_luong_san_pham;
 
-                // 4) Ghi vào $data cho DonHang (NULL khi không thuế để không phá report cũ)
                 $data['tax_mode']   = $taxMode;
                 $data['vat_rate']   = $vatRate;
                 $data['subtotal']   = ($taxMode === 1) ? (int)$subtotal : null;
                 $data['vat_amount'] = ($taxMode === 1) ? (int)$vatAmount : null;
                 $data['grand_total']= ($taxMode === 1) ? (int)$grandTotal : null;
 
-                // 🔹 Lưu snapshot giảm giá thành viên xuống DB
                 $data['member_discount_percent'] = (int)$memberPercent;
                 $data['member_discount_amount']  = $memberAmount;
 
-
             } else {
-                // KHÔNG tái tính tiền hàng khi không được phép chỉnh tiền/hàng
-                // Chỉ chuẩn hoá thanh toán dựa trên tổng hiện tại trong DB
                 $this->normalizePayments($data, (int) $donHang->tong_tien_can_thanh_toan);
             }
 
-            // ✅ Chuẩn hoá thông tin người nhận (Tên/SĐT/Ngày giờ nhận)
             $this->normalizeRecipientFields($data);
 
-            // ===== NEW: Chuẩn hoá trạng thái đơn hàng (0=Chưa giao,1=Đang giao,2=Đã giao,3=Đã hủy) =====
             if (array_key_exists('trang_thai_don_hang', $data)) {
                 if ($data['trang_thai_don_hang'] === null || $data['trang_thai_don_hang'] === '') {
                     $data['trang_thai_don_hang'] = DonHang::TRANG_THAI_CHUA_GIAO;
@@ -671,7 +588,6 @@ if ($canOverride && $userPrice !== null) {
                     ], true) ? $v : DonHang::TRANG_THAI_CHUA_GIAO;
                 }
             }
-            // nếu FE không gửi field này thì giữ nguyên trạng thái hiện có của đơn
 
             if (isset($data['khach_hang_id']) && $data['khach_hang_id'] != null) {
                 $khachHang = KhachHang::find($data['khach_hang_id']);
@@ -681,59 +597,30 @@ if ($canOverride && $userPrice !== null) {
                 }
             }
 
-            // ⚠️ KHÔNG cho update trực tiếp mã
             $dataDonHang = $data;
             unset(
                 $dataDonHang['danh_sach_san_pham'],
                 $dataDonHang['so_tien_con_lai'],
                 $dataDonHang['ma_don_hang'],
                 $dataDonHang['giam_gia_thanh_vien'],
-                $dataDonHang['khach_hang_display'],   // 🔹 thêm
-                $dataDonHang['kenh_lien_he_display']   // 🔹 thêm (nếu có)
+                $dataDonHang['khach_hang_display'],
+                $dataDonHang['kenh_lien_he_display']
             );
 
             $donHang->update($dataDonHang);
 
-
-            // Làm mới chi tiết — chỉ khi có gửi danh_sach_san_pham
             if (isset($data['danh_sach_san_pham']) && is_array($data['danh_sach_san_pham'])) {
                 $donHang->chiTietDonHangs()->delete();
                 foreach ($data['danh_sach_san_pham'] as $item) {
                     $item['don_hang_id'] = $donHang->id;
+
+                    if (array_key_exists('loai_gia', $item)) {
+                        unset($item['loai_gia']);
+                    }
+
                     ChiTietDonHang::create($item);
                 }
             }
-
-// ====== BEGIN: SYNC BACK TO san_phams + ENSURE DVT MAPPING ======
-if (!empty($priceSync)) {
-    foreach ($priceSync as $p) {
-        // (1) Đảm bảo có mapping đơn vị tính cho SP/DVT
-        if (!empty($p['san_pham_id']) && !empty($p['don_vi_tinh_id'])) {
-            \App\Models\DonViTinhSanPham::firstOrCreate([
-                'san_pham_id'    => (int)$p['san_pham_id'],
-                'don_vi_tinh_id' => (int)$p['don_vi_tinh_id'],
-            ]);
-        }
-
-        // (2) Chỉ sync giá khi thực sự override (3 mã whitelist)
-        if (!empty($p['override'])) {
-            /** @var \App\Models\SanPham|null $sp */
-            $sp = \App\Models\SanPham::find((int)$p['san_pham_id']);
-            if ($sp) {
-                if ((int)$p['loai_gia'] === 2) {
-                    // 2 = Đặt trước 3 ngày
-                    $sp->gia_dat_truoc_3n = (int)$p['price'];
-                } else {
-                    // 1 = Đặt ngay
-                    $sp->gia_nhap_mac_dinh = (int)$p['price'];
-                }
-                $sp->saveQuietly();
-            }
-        }
-    }
-}
-// ====== END: SYNC BACK ======
-
 
             DB::commit();
             return $donHang->refresh();
@@ -780,8 +667,7 @@ if (!empty($priceSync)) {
     }
 
     /**
-     * Lấy giá bán sản phẩm
-     * Giữ tương thích cũ, thêm tham số $loaiGia (1 = Đặt ngay, 2 = Đặt trước 3 ngày).
+     * Lấy giá bán sản phẩm (API phụ, giữ tạm cho tương thích)
      */
     public function getGiaBanSanPham($sanPhamId, $donViTinhId, $loaiGia = 1)
     {
@@ -795,7 +681,6 @@ if (!empty($priceSync)) {
             return (int)$loSanPham->gia_ban_le_don_vi;
         }
 
-        // Không có lô → chọn giá theo loại
         $sanPham = SanPham::find($sanPhamId);
         if ($sanPham) {
             $base = (int)($loaiGia == 2
@@ -816,7 +701,7 @@ if (!empty($priceSync)) {
         try {
             $donHang = $this->getById($id);
 
-            if (!$donHang) {
+            if (! $donHang) {
                 return CustomResponse::error('Đơn hàng không tồn tại');
             }
 

@@ -20,6 +20,7 @@ class SanPham extends Model
     protected $casts = [
         'gia_nhap_mac_dinh' => 'int',   // Hiển thị nhãn: "Giá đặt ngay"
         'gia_dat_truoc_3n'  => 'int',   // Giá đặt trước 3 ngày (cột mới)
+          'is_package'        => 'bool',  // ✅ Gói dịch vụ (true) hay chi tiết đơn lẻ (false)
     ];
 
     protected static function boot()
@@ -59,6 +60,15 @@ class SanPham extends Model
     public function chiTietPhieuNhapKhos(): HasMany
     {
         return $this->hasMany(ChiTietPhieuNhapKho::class);
+    }
+
+    /**
+     * Các item (thiết bị / dịch vụ con) nằm trong gói này
+     * - Chỉ có ý nghĩa khi san_phams.loai_san_pham = gói dịch vụ (sau này mình sẽ dùng type riêng)
+     */
+    public function packageItems(): HasMany
+    {
+        return $this->hasMany(EventPackageItem::class, 'san_pham_id');
     }
 
     // Kết nối sẵn với bảng images để lưu ảnh

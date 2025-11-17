@@ -18,39 +18,68 @@ class CreateQuanLyBanHangRequest extends FormRequest
   /**
    * Get the validation rules that apply to the request.
    *
-   * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
+   * Lưu ý:
+   * - Vẫn giữ các field cũ để không gãy flow.
+   * - Bổ sung field phục vụ BÁO GIÁ SỰ KIỆN (project_name, event_*, venue_*, contact_*).
+   * - loai_gia KHÔNG còn bắt buộc, chỉ cho phép nếu FE còn gửi (sẽ bị bỏ trước khi ghi chi tiết).
    */
   public function rules(): array
   {
     return [
-      // ===== Thông tin đơn hàng =====
+      // ===== Thông tin đơn / báo giá =====
       // BE sẽ tự sinh => KHÔNG required; vẫn đảm bảo không trùng nếu có truyền vào
       'ma_don_hang'        => 'sometimes|nullable|string|max:255|unique:don_hangs,ma_don_hang',
       'ngay_tao_don_hang'  => 'required|date',
+
+      // 👉 Event ERP: tạm dùng dia_chi_giao_hang như "địa chỉ chính" (có thể map với venue sau)
       'dia_chi_giao_hang'  => 'required|string',
 
-      // ===== TRẠNG THÁI ĐƠN HÀNG (NEW) =====
+      // ===== TRẠNG THÁI ĐƠN HÀNG (giữ cho log giao hàng nếu còn dùng) =====
       // 0 = Chưa giao, 1 = Đang giao, 2 = Đã giao, 3 = Đã hủy
       'trang_thai_don_hang' => ['sometimes','nullable','integer', Rule::in([0,1,2,3])],
 
-      // ===== Thông tin người nhận (BỔ SUNG) =====
+      // ===== THÔNG TIN NGƯỜI NHẬN (cũ – giữ lại) =====
       'nguoi_nhan_ten'        => ['nullable', 'string', 'max:191'],
       'nguoi_nhan_sdt'        => ['nullable', 'string', 'max:20', 'regex:/^(0|\+84)\d{8,12}$/'],
-    'nguoi_nhan_thoi_gian'  => ['required', 'date'],
+      'nguoi_nhan_thoi_gian'  => ['required', 'date'],
 
 
-      // ===== Khách hàng =====
+      // ===== THÔNG TIN KHÁCH HÀNG =====
       // 0 = KH hệ thống, 1 = KH tự do
       'loai_khach_hang'    => ['required', 'integer', Rule::in([0, 1])],
       'khach_hang_id'      => ['nullable', 'integer', 'exists:khach_hangs,id', 'required_if:loai_khach_hang,0'],
       'ten_khach_hang'     => ['nullable', 'string', 'max:255', 'required_if:loai_khach_hang,1'],
       'so_dien_thoai'      => ['nullable', 'string', 'max:255', 'required_if:loai_khach_hang,1'],
 
+      // ===== THÔNG TIN SỰ KIỆN / BÁO GIÁ (MỚI – optional để bạn migrate dần) =====
+      // Tên dự án / sự kiện
+      'project_name'       => ['sometimes', 'nullable', 'string', 'max:255'],
+      // Loại sự kiện (khai trương, hội nghị, gala, wedding, internal…)
+      'event_type'         => ['sometimes', 'nullable', 'string', 'max:100'],
+      // Thời gian bắt đầu & kết thúc sự kiện
+      'event_start'        => ['sometimes', 'nullable', 'date'],
+      'event_end'          => ['sometimes', 'nullable', 'date'],
+      // Số lượng khách dự kiến
+      'guest_count'        => ['sometimes', 'nullable', 'integer', 'min:0'],
+      // Địa điểm tổ chức
+      'venue_name'         => ['sometimes', 'nullable', 'string', 'max:255'],
+      'venue_address'      => ['sometimes', 'nullable', 'string', 'max:255'],
+      // Thông tin người liên hệ chính (snapshot trên báo giá)
+      'contact_name'       => ['sometimes', 'nullable', 'string', 'max:191'],
+      'contact_phone'      => ['sometimes', 'nullable', 'string', 'max:50'],
+      'contact_email'      => ['sometimes', 'nullable', 'email', 'max:191'],
+      'contact_department' => ['sometimes', 'nullable', 'string', 'max:191'],
+      'contact_position'   => ['sometimes', 'nullable', 'string', 'max:191'],
+
+      // (Nếu cần FE tự set trạng thái báo giá, có thể dùng rule sau – hiện để optional)
+      'quote_status'       => ['sometimes', 'nullable', 'integer', Rule::in([0,1,2,3,4,5,6])],
+
+
       // ===== Chi phí – giảm trừ (đơn giá đã gồm VAT, không dùng VAT nữa) =====
       'giam_gia'           => ['required', 'numeric', 'min:0'],
-            // Giảm giá thành viên (%), không bắt buộc – BE sẽ tính tiền từ % này
-      'giam_gia_thanh_vien' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100'],
 
+      // Giảm giá thành viên (%), không bắt buộc – BE sẽ tính tiền từ % này
+      'giam_gia_thanh_vien' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100'],
 
       'chi_phi'            => ['required', 'numeric', 'min:0'],
 
@@ -65,7 +94,7 @@ class CreateQuanLyBanHangRequest extends FormRequest
         Rule::requiredIf(fn () => (int)$this->input('loai_thanh_toan') === 1),
       ],
 
-      // ===== Thuế (NEW) =====
+      // ===== Thuế (VAT) =====
       'tax_mode'  => ['sometimes', 'integer', Rule::in([0, 1])],   // 0 = không thuế (mặc định), 1 = VAT
       'vat_rate'  => [
         'sometimes', 'nullable', 'numeric', 'min:0', 'max:20',
@@ -73,15 +102,17 @@ class CreateQuanLyBanHangRequest extends FormRequest
       ],
 
 
-
-      // ===== Danh sách sản phẩm =====
+      // ===== Danh sách dịch vụ (SẢN PHẨM → DỊCH VỤ) =====
       'danh_sach_san_pham'                  => ['required', 'array', 'min:1'],
       'danh_sach_san_pham.*.san_pham_id'    => ['required', 'integer', 'exists:san_phams,id'],
       'danh_sach_san_pham.*.don_vi_tinh_id' => ['required', 'integer', 'exists:don_vi_tinhs,id'],
       'danh_sach_san_pham.*.so_luong'       => ['required', 'numeric', 'min:1'],
-      // loai_gia: 1 = Đặt ngay, 2 = Đặt trước 3 ngày (service vẫn default = 1 nếu thiếu)
-      'danh_sach_san_pham.*.loai_gia'       => ['required', 'integer', Rule::in([1, 2])],
-      // don_gia/thanh_tien cho phép truyền lên để hiển thị, service sẽ tính lại
+
+      // ❌ EVENT: KHÔNG còn bắt buộc loại giá (đặt ngay / đặt trước 3 ngày)
+      // Vẫn cho phép FE gửi nếu còn form cũ, nhưng sẽ bị bỏ trước khi ghi chi tiết.
+      'danh_sach_san_pham.*.loai_gia'       => ['sometimes','nullable','integer', Rule::in([1, 2])],
+
+      // Giá & thành tiền: cho phép FE truyền để sửa trực tiếp khi lên báo giá
       'danh_sach_san_pham.*.don_gia'        => ['nullable', 'numeric', 'min:0'],
       'danh_sach_san_pham.*.thanh_tien'     => ['nullable', 'numeric', 'min:0'],
 
@@ -93,25 +124,22 @@ class CreateQuanLyBanHangRequest extends FormRequest
 
   /**
    * Get the error messages for the defined validation rules.
-   *
-   * @return array<string, string>
    */
   public function messages(): array
   {
     return [
-      // Đơn hàng
-      // (Không còn required cho ma_don_hang)
+      // Đơn hàng / báo giá
       'ma_don_hang.unique'         => 'Mã đơn hàng đã tồn tại',
       'ma_don_hang.max'            => 'Mã đơn hàng không được vượt quá 255 ký tự',
       'ngay_tao_don_hang.required' => 'Ngày tạo đơn hàng là bắt buộc',
       'ngay_tao_don_hang.date'     => 'Ngày tạo đơn hàng không hợp lệ',
-      'dia_chi_giao_hang.required' => 'Địa chỉ giao hàng là bắt buộc',
+      'dia_chi_giao_hang.required' => 'Địa chỉ là bắt buộc',
 
-      // Trạng thái (NEW)
+      // Trạng thái (giao hàng)
       'trang_thai_don_hang.integer' => 'Trạng thái đơn hàng phải là số',
       'trang_thai_don_hang.in'      => 'Trạng thái đơn hàng phải là 0, 1, 2 hoặc 3',
 
-      // Thông tin người nhận (BỔ SUNG)
+      // Thông tin người nhận
       'nguoi_nhan_ten.string'      => 'Tên người nhận phải là chuỗi',
       'nguoi_nhan_ten.max'         => 'Tên người nhận không được vượt quá 191 ký tự',
       'nguoi_nhan_sdt.string'      => 'SĐT người nhận phải là chuỗi',
@@ -133,33 +161,43 @@ class CreateQuanLyBanHangRequest extends FormRequest
       'so_dien_thoai.string'       => 'Số điện thoại phải là chuỗi',
       'so_dien_thoai.max'          => 'Số điện thoại không được vượt quá 255 ký tự',
 
+      // Event (chỉ báo lỗi cơ bản)
+      'project_name.max'           => 'Tên dự án / sự kiện không được vượt quá 255 ký tự',
+      'event_type.max'             => 'Loại sự kiện không được vượt quá 100 ký tự',
+      'event_start.date'           => 'Thời gian bắt đầu sự kiện không hợp lệ',
+      'event_end.date'             => 'Thời gian kết thúc sự kiện không hợp lệ',
+      'guest_count.integer'        => 'Số lượng khách phải là số nguyên',
+      'guest_count.min'            => 'Số lượng khách không được âm',
+      'venue_name.max'             => 'Tên địa điểm không được vượt quá 255 ký tự',
+      'venue_address.max'          => 'Địa chỉ địa điểm không được vượt quá 255 ký tự',
+      'contact_email.email'        => 'Email người liên hệ không hợp lệ',
+
       // Giảm trừ/Chi phí
-      'giam_gia.required' => 'Giảm giá là bắt buộc',
-      'giam_gia.numeric'  => 'Giảm giá phải là số',
-      'giam_gia.min'      => 'Giảm giá không được âm',
-      'chi_phi.required'  => 'Chi phí là bắt buộc',
-      'chi_phi.numeric'   => 'Chi phí phải là số',
-      'chi_phi.min'       => 'Chi phí không được âm',
-            'giam_gia_thanh_vien.numeric' => 'Giảm giá thành viên phải là số phần trăm',
+      'giam_gia.required'          => 'Giảm giá là bắt buộc',
+      'giam_gia.numeric'           => 'Giảm giá phải là số',
+      'giam_gia.min'               => 'Giảm giá không được âm',
+      'chi_phi.required'           => 'Chi phí là bắt buộc',
+      'chi_phi.numeric'            => 'Chi phí phải là số',
+      'chi_phi.min'                => 'Chi phí không được âm',
+      'giam_gia_thanh_vien.numeric' => 'Giảm giá thành viên phải là số phần trăm',
       'giam_gia_thanh_vien.min'     => 'Giảm giá thành viên không được âm',
       'giam_gia_thanh_vien.max'     => 'Giảm giá thành viên không được lớn hơn 100%',
 
-
       // Thanh toán
-      'loai_thanh_toan.required' => 'Loại thanh toán là bắt buộc',
-      'loai_thanh_toan.integer'  => 'Loại thanh toán phải là số',
-      'loai_thanh_toan.in'       => 'Loại thanh toán phải là 0, 1 hoặc 2',
+      'loai_thanh_toan.required'   => 'Loại thanh toán là bắt buộc',
+      'loai_thanh_toan.integer'    => 'Loại thanh toán phải là số',
+      'loai_thanh_toan.in'         => 'Loại thanh toán phải là 0, 1 hoặc 2',
       'so_tien_da_thanh_toan.required_if' => 'Vui lòng nhập số tiền đã thanh toán khi chọn "Thanh toán một phần"',
       'so_tien_da_thanh_toan.numeric'     => 'Số tiền đã thanh toán phải là số',
       'so_tien_da_thanh_toan.min'         => 'Số tiền đã thanh toán không được âm',
 
-      // Sản phẩm
-      'danh_sach_san_pham.required' => 'Danh sách sản phẩm là bắt buộc',
-      'danh_sach_san_pham.array'    => 'Danh sách sản phẩm phải là một mảng',
-      'danh_sach_san_pham.min'      => 'Đơn hàng phải có ít nhất 1 sản phẩm',
-      'danh_sach_san_pham.*.san_pham_id.required' => 'ID sản phẩm là bắt buộc',
-      'danh_sach_san_pham.*.san_pham_id.integer'  => 'ID sản phẩm phải là số',
-      'danh_sach_san_pham.*.san_pham_id.exists'   => 'Sản phẩm không tồn tại',
+      // Sản phẩm / Dịch vụ
+      'danh_sach_san_pham.required' => 'Danh sách dịch vụ là bắt buộc',
+      'danh_sach_san_pham.array'    => 'Danh sách dịch vụ phải là một mảng',
+      'danh_sach_san_pham.min'      => 'Báo giá phải có ít nhất 1 dịch vụ',
+      'danh_sach_san_pham.*.san_pham_id.required' => 'ID dịch vụ là bắt buộc',
+      'danh_sach_san_pham.*.san_pham_id.integer'  => 'ID dịch vụ phải là số',
+      'danh_sach_san_pham.*.san_pham_id.exists'   => 'Dịch vụ không tồn tại',
       'danh_sach_san_pham.*.don_vi_tinh_id.required' => 'Đơn vị tính là bắt buộc',
       'danh_sach_san_pham.*.don_vi_tinh_id.integer'  => 'Đơn vị tính phải là số',
       'danh_sach_san_pham.*.don_vi_tinh_id.exists'   => 'Đơn vị tính không tồn tại',
@@ -167,24 +205,17 @@ class CreateQuanLyBanHangRequest extends FormRequest
       'danh_sach_san_pham.*.so_luong.numeric'        => 'Số lượng phải là số',
       'danh_sach_san_pham.*.so_luong.min'            => 'Số lượng phải lớn hơn 0',
 
-      // Loại giá
-      'danh_sach_san_pham.*.loai_gia.required' => 'Vui lòng chọn loại giá',
-      'danh_sach_san_pham.*.loai_gia.integer'  => 'Loại giá phải là số',
-      'danh_sach_san_pham.*.loai_gia.in'       => 'Loại giá không hợp lệ',
+      // Thuế
+      'tax_mode.integer'         => 'Chế độ thuế phải là số',
+      'tax_mode.in'              => 'Chế độ thuế không hợp lệ',
+      'vat_rate.required_if'     => 'Vui lòng nhập VAT (%) khi chọn Có thuế',
+      'vat_rate.numeric'         => 'VAT (%) phải là số',
+      'vat_rate.min'             => 'VAT (%) không được âm',
+      'vat_rate.max'             => 'VAT (%) không vượt quá 20%',
 
       // Khác
-      'ghi_chu.string' => 'Ghi chú phải là chuỗi',
-      'ghi_chu.max'    => 'Ghi chú không được vượt quá 255 ký tự',
-
-
-            // Thuế
-      'tax_mode.integer' => 'Chế độ thuế phải là số',
-      'tax_mode.in'      => 'Chế độ thuế không hợp lệ',
-      'vat_rate.required_if' => 'Vui lòng nhập VAT (%) khi chọn Có thuế',
-      'vat_rate.numeric'     => 'VAT (%) phải là số',
-      'vat_rate.min'         => 'VAT (%) không được âm',
-      'vat_rate.max'         => 'VAT (%) không vượt quá 20%',
-
+      'ghi_chu.string'           => 'Ghi chú phải là chuỗi',
+      'ghi_chu.max'              => 'Ghi chú không được vượt quá 255 ký tự',
     ];
   }
 }
