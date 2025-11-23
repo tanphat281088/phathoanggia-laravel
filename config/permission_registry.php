@@ -47,6 +47,14 @@ return [
   ['name' => 'danh-muc-san-pham',  'actions' => ['showMenu'=>false,'index'=>false,'show'=>false,'create'=>false,'edit'=>false,'delete'=>false,'export'=>false]],
   ['name' => 'don-vi-tinh',        'actions' => ['showMenu'=>false,'index'=>false,'show'=>false,'create'=>false,'edit'=>false,'delete'=>false,'export'=>false]],
   ['name' => 'san-pham',           'actions' => ['showMenu'=>false,'index'=>false,'show'=>false,'create'=>false,'edit'=>false,'delete'=>false,'export'=>false]],
+
+  // Cha: chỉ dùng để bật/tắt menu "Quản lý Gói dịch vụ" trên Sidebar
+  ['name' => 'goi-dich-vu',            'actions' => ['showMenu'=>false,'index'=>false,'show'=>false,'create'=>false,'edit'=>false,'delete'=>false,'export'=>false]],
+
+   // ===== GÓI DỊCH VỤ =====
+  ['name' => 'goi-dich-vu-groups',     'actions' => ['showMenu'=>false,'index'=>false,'show'=>false,'create'=>false,'edit'=>false,'delete'=>false,'export'=>false]],
+  ['name' => 'goi-dich-vu-categories', 'actions' => ['showMenu'=>false,'index'=>false,'show'=>false,'create'=>false,'edit'=>false,'delete'=>false,'export'=>false]],
+  ['name' => 'goi-dich-vu-packages',   'actions' => ['showMenu'=>false,'index'=>false,'show'=>false,'create'=>false,'edit'=>false,'delete'=>false,'export'=>false]],
   // loai-san-pham (master options) nếu có trang riêng thì thêm showMenu/index
 
   // ===== KHO & BÁN HÀNG =====
@@ -183,6 +191,39 @@ return [
     'delete'   => false,
 ]],
 
+// ===== QUẢN LÝ CHI PHÍ (cha) =====
+['name' => 'quan-ly-chi-phi', 'actions' => [
+    // showMenu: bật true nếu anh muốn hiện 1 group "Quản lý chi phí" trên Sidebar
+    'showMenu' => true,
+    'index'    => false,
+    'show'     => false,
+    'create'   => false,
+    'edit'     => false,
+    'delete'   => false,
+    'export'   => false,
+]],
+
+// ===== QUẢN LÝ CHI PHÍ → ĐỀ XUẤT =====
+['name' => 'quan-ly-chi-phi-de-xuat', 'actions' => [
+    'showMenu' => false,  // menu con sẽ xử lý ở FE bằng group "Quản lý chi phí"
+    'index'    => false,  // list bảng chi phí đề xuất
+    'show'     => false,  // xem 1 bảng
+    'create'   => false,  // tạo mới (from-quote)
+    'edit'     => false,  // sửa header + items
+    'delete'   => false,  // xoá
+    'export'   => false,  // nếu sau này có export Excel
+]],
+
+// ===== QUẢN LÝ CHI PHÍ → THỰC TẾ =====
+['name' => 'quan-ly-chi-phi-thuc-te', 'actions' => [
+    'showMenu' => false,
+    'index'    => false,
+    'show'     => false,
+    'create'   => false,
+    'edit'     => false,
+    'delete'   => false,
+    'export'   => false,
+]],
 
 
 // ===== NHÂN SỰ → BẢNG LƯƠNG =====

@@ -102,10 +102,23 @@ class DanhMucSanPhamController extends Controller
 
   /**
    * Lấy danh sách DanhMucSanPham dạng option
+   * - Hỗ trợ ?level=1 (tầng 1), ?level=2 (tầng 2)
    */
-  public function getOptions()
+  /**
+   * Lấy danh sách DanhMucSanPham dạng option
+   * - Hỗ trợ:
+   *    + ?level=1 (tầng 1: không có parent_id)
+   *    + ?level=2 (tầng 2: có parent_id)
+   *    + ?group_code=NS|CSVC|TIEC|TD|CPK (lọc theo nhóm dịch vụ)
+   */
+  public function getOptions(Request $request)
   {
-    $result = $this->danhMucSanPhamService->getOptions();
+    // Nhận cả level + group_code (FE có thể gửi 1 trong 2 hoặc cả 2)
+    // Nhận cả level + group_code + parent_id
+    $params = $request->only(['level', 'group_code', 'parent_id']);
+
+
+    $result = $this->danhMucSanPhamService->getOptions($params);
 
     if ($result instanceof \Illuminate\Http\JsonResponse) {
       return $result;
@@ -113,6 +126,8 @@ class DanhMucSanPhamController extends Controller
 
     return CustomResponse::success($result);
   }
+
+
 
   public function downloadTemplateExcel()
   {

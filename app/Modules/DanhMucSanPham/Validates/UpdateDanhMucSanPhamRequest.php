@@ -25,6 +25,10 @@ class UpdateDanhMucSanPhamRequest extends FormRequest
       // Thêm các quy tắc validation cho cập nhật DanhMucSanPham ở đây
       'ma_danh_muc' => 'sometimes|required|string|max:255|unique:danh_muc_san_phams,ma_danh_muc,' . $this->id,
       'ten_danh_muc' => 'sometimes|required|string|max:255',
+      'group_code'    => 'sometimes|nullable|string',
+
+        // 🔹 Danh mục cha (Tầng trên)
+        'parent_id'     => 'sometimes|nullable|integer|exists:danh_muc_san_phams,id',
       'ghi_chu' => 'nullable|string',
       'trang_thai' => 'sometimes|required|boolean',
       'image' => 'nullable|string',

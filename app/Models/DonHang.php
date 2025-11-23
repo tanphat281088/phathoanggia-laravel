@@ -85,7 +85,21 @@ class DonHang extends Model
         // Giảm giá thành viên
         'member_discount_percent' => 'integer',
         'member_discount_amount'  => 'integer',
+
+        // Tuỳ biến báo giá (Step 8)
+        'quote_section_titles'    => 'array',
+        'quote_footer_note'       => 'string',
+
+        // Tuỳ biến Hạng mục gốc + Người báo giá
+        'quote_category_titles'   => 'array',
+        'quote_signer_name'       => 'string',
+        'quote_signer_title'      => 'string',
+        'quote_signer_phone'      => 'string',
+        'quote_signer_email'      => 'string',
+        'quote_approver_note'     => 'string',
+
     ];
+
 
     protected static function boot()
     {

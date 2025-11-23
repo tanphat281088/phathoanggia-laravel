@@ -116,9 +116,39 @@ class CreateQuanLyBanHangRequest extends FormRequest
       'danh_sach_san_pham.*.don_gia'        => ['nullable', 'numeric', 'min:0'],
       'danh_sach_san_pham.*.thanh_tien'     => ['nullable', 'numeric', 'min:0'],
 
+            // GÓI DỊCH VỤ: flag + label + chi tiết gói
+      'danh_sach_san_pham.*.is_package'      => ['sometimes', 'boolean'],
+      'danh_sach_san_pham.*.san_pham_label'  => ['sometimes', 'nullable', 'string', 'max:255'],
+       // 🔹 HẠNG MỤC GỐC (Nhóm gói dịch vụ) – tên dùng cho cột HẠNG MỤC trên báo giá
+      'danh_sach_san_pham.*.hang_muc_goc'    => ['sometimes', 'nullable', 'string', 'max:255'],
+      'danh_sach_san_pham.*.package_items'   => ['sometimes', 'nullable', 'array'],
+
+
       // ===== Khác =====
       'ghi_chu'             => ['nullable', 'string', 'max:255'],
       'images'              => ['nullable', 'array'],
+
+      // ===== TUỲ BIẾN TIÊU ĐỀ & GHI CHÚ BÁO GIÁ (STEP 8) =====
+      // Map section_code (NS/CSVC/TIEC/TD/CPK) => tiêu đề Hạng mục hiển thị
+      'quote_section_titles'        => ['sometimes', 'nullable', 'array'],
+      'quote_section_titles.*'      => ['nullable', 'string', 'max:255'],
+
+      // Ghi chú / phần đuôi báo giá
+      'quote_footer_note'           => ['sometimes', 'nullable', 'string'],
+
+      // ===== TUỲ BIẾN HẠNG MỤC THEO NHÓM GÓI (CÁCH 1) =====
+      'quote_category_titles'               => ['sometimes', 'nullable', 'array'],
+      'quote_category_titles.*.key'         => ['sometimes', 'nullable', 'string', 'max:255'],
+      'quote_category_titles.*.label'       => ['sometimes', 'nullable', 'string', 'max:255'],
+
+
+      // ===== META NGƯỜI BÁO GIÁ / XÁC NHẬN BÁO GIÁ =====
+      'quote_signer_name'           => ['sometimes', 'nullable', 'string', 'max:191'],
+      'quote_signer_title'          => ['sometimes', 'nullable', 'string', 'max:191'],
+      'quote_signer_phone'          => ['sometimes', 'nullable', 'string', 'max:50'],
+      'quote_signer_email'          => ['sometimes', 'nullable', 'email', 'max:191'],
+      'quote_approver_note'         => ['sometimes', 'nullable', 'string', 'max:255'],
+
     ];
   }
 

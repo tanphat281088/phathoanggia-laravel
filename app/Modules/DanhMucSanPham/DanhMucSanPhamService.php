@@ -56,7 +56,8 @@ class DanhMucSanPhamService
                 // Tự sinh mã nếu không có
                 if (empty($data['ma_danh_muc'])) {
                     $data['ma_danh_muc'] = $this->generateMaDanhMuc(
-                        $data['group_code'] ?? null
+                        $data['group_code'] ?? null,
+                        $data['parent_id'] ?? null
                     );
                 }
 
@@ -119,12 +120,61 @@ class DanhMucSanPhamService
         }
     }
 
-    public function getOptions()
+    /**
+     * Lấy danh sách DanhMucSanPham dạng options cho combobox
+     *
+     * Hỗ trợ:
+     *  - level=1: chỉ lấy tầng 1 (parent_id NULL hoặc 0)
+     *  - level=2: chỉ lấy tầng 2 (parent_id > 0)
+     *  - group_code:
+     *      + Cho phép cả code NGẮN: NS, CSVC, TIEC, TD, CPK
+     *      + Và code DÀI cũ: NHAN_SU, CO_SO_VAT_CHAT, THUE_DIA_DIEM, CHI_PHI_KHAC
+     *    → sẽ chuẩn hoá về code ngắn rồi lọc theo cột group_code trong DB
+     */
+    public function getOptions(array $params = [])
     {
-        return DanhMucSanPham::select('id as value', 'ten_danh_muc as label')
-            ->orderBy('ten_danh_muc')
-            ->get();
+        $query = DanhMucSanPham::query()
+            ->select('id as value', 'ten_danh_muc as label')
+            ->orderBy('ten_danh_muc');
+
+        $level = $params['level'] ?? null;
+
+        // 🔹 Lọc theo tầng 1 / tầng 2
+        if ($level == 1) {
+            // Tầng 1: không có parent_id
+            $query->where(function ($q) {
+                $q->whereNull('parent_id')
+                  ->orWhere('parent_id', 0);
+            });
+        } elseif ($level == 2) {
+            // Tầng 2: có parent_id
+            $query->where(function ($q) {
+                $q->whereNotNull('parent_id')
+                  ->where('parent_id', '>', 0);
+            });
+        }
+        // 🔹 Nếu FE gửi parent_id (VD: id của MC, Âm thanh, ...) → chỉ lấy con trực tiếp của nó
+        if (!empty($params['parent_id'])) {
+            $query->where('parent_id', (int) $params['parent_id']);
+        }
+
+        // 🔹 Lọc thêm theo group_code nếu FE truyền (NS/CSVC/TIEC/TD/CPK hoặc mã dài)
+        if (!empty($params['group_code'])) {
+            $rawGroupCode = (string) $params['group_code'];
+
+            // Dùng lại logic chuẩn hoá: code dài → code ngắn
+            $normalized = $this->normalizeGroupCode($rawGroupCode);
+
+            // Nếu normalizeGroupCode trả null (code lạ) thì fallback dùng raw
+            $groupCodeToUse = $normalized ?: $rawGroupCode;
+
+            $query->where('group_code', $groupCodeToUse);
+        }
+
+        return $query->get();
     }
+
+
 
     /**
      * Chuẩn hóa group_code:
@@ -152,16 +202,9 @@ class DanhMucSanPhamService
     }
 
     /**
-     * Tự sinh mã danh mục theo group_code ngắn
-     *
-     * - NS   -> NS0001, NS0002, ...
-     * - CSVC -> CSVC0001, ...
-     * - TIEC -> TIEC0001, ...
-     * - TD   -> TD0001, ...
-     * - CPK  -> CPK0001, ...
-     * - null -> DM0001, ...
+     * Lấy prefix theo group_code ngắn
      */
-    protected function generateMaDanhMuc(?string $groupCode): string
+    protected function getGroupPrefix(?string $groupCode): string
     {
         $prefixMap = [
             'NS'   => 'NS',
@@ -171,17 +214,63 @@ class DanhMucSanPhamService
             'CPK'  => 'CPK',
         ];
 
-        $prefix = $prefixMap[$groupCode] ?? 'DM';
+        return $prefixMap[$groupCode] ?? 'DM';
+    }
 
-        $lastCode = DanhMucSanPham::where('ma_danh_muc', 'like', $prefix . '%')
-            ->orderBy('ma_danh_muc', 'desc')
-            ->value('ma_danh_muc');
+    /**
+     * Tự sinh mã danh mục
+     *
+     * - Nếu KHÔNG có parent_id (tầng 1):
+     *      + NS   -> NS0001, NS0002, ...
+     *      + CSVC -> CSVC0001, ...
+     * - Nếu CÓ parent_id (tầng 2):
+     *      + Lấy mã danh mục cha, ví dụ: CSVC0001
+     *      + Con sẽ là: CSVC0001-01, CSVC0001-02, ...
+     */
+    protected function generateMaDanhMuc(?string $groupCode, ?int $parentId = null): string
+    {
+        // 🔹 Tầng 2: có danh mục cha
+        if ($parentId) {
+            $parent = DanhMucSanPham::find($parentId);
+            $basePrefix = $parent?->ma_danh_muc;
 
-        $nextNumber = 1;
-        if ($lastCode && preg_match('/^' . preg_quote($prefix, '/') . '(\d+)$/', $lastCode, $m)) {
-            $nextNumber = (int) $m[1] + 1;
+            // Nếu không tìm thấy cha, fallback về prefix theo group_code
+            if (!$basePrefix) {
+                $basePrefix = $this->getGroupPrefix($groupCode);
+            }
+
+            $prefix = $basePrefix . '-';
+
+            $lastCode = DanhMucSanPham::where('ma_danh_muc', 'like', $prefix . '%')
+                ->orderBy('ma_danh_muc', 'desc')
+                ->value('ma_danh_muc');
+
+            $nextNumber = 1;
+            if ($lastCode && preg_match('/^' . preg_quote($prefix, '/') . '(\d+)$/', $lastCode, $m)) {
+                $nextNumber = (int) $m[1] + 1;
+            }
+
+            // 2 chữ số cho con: 01, 02, 03,...
+            return $prefix . str_pad((string) $nextNumber, 2, '0', STR_PAD_LEFT);
         }
 
+        // 🔹 Tầng 1: không có danh mục cha → dùng prefix theo group_code
+        // 🔹 Tầng 1: không có danh mục cha → dùng prefix theo group_code
+        $prefix = $this->getGroupPrefix($groupCode);
+
+        // Đếm số danh mục TẦNG 1 hiện có cùng group_code
+        // (kể cả các bản ghi cũ đang bị trùng mã)
+        $count = DanhMucSanPham::where('group_code', $groupCode)
+            ->where(function ($q) {
+                $q->whereNull('parent_id')
+                  ->orWhere('parent_id', 0);
+            })
+            ->count();
+
+        $nextNumber = $count + 1;
+
+        // 4 chữ số cho tầng 1: 0001, 0002,...
         return $prefix . str_pad((string) $nextNumber, 4, '0', STR_PAD_LEFT);
+
     }
 }

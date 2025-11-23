@@ -11,6 +11,8 @@ use Illuminate\Http\Request;
 use Maatwebsite\Excel\Facades\Excel;
 use App\Imports\QuanLyBanHangImport;
 use Illuminate\Support\Str;
+use App\Services\Quote\QuoteBuilder;
+
 
 // 🔽 BỔ SUNG: gọi service ghi nhận biến động điểm khi đơn đã thanh toán
 use App\Services\MemberPointService;
@@ -261,6 +263,98 @@ return CustomResponse::success($result, 'Tạo mới thành công');
 
     return $result; // Trả về view HTML
   }
+
+
+      /**
+     * Xem báo giá dịch vụ (layout sự kiện)
+     * GET /api/quan-ly-ban-hang/xem-bao-gia/{id}
+     *
+     * - Dùng cho preview PDF/print, giống kiểu xem trước hóa đơn.
+     * - Build dữ liệu sections từ đơn hàng bằng QuoteBuilder, rồi đổ vào view bao-gia.template.
+     */
+    public function xemBaoGia($id, Request $request, QuoteBuilder $quoteBuilder)
+    {
+        // Load đơn hàng + các quan hệ cần thiết
+        /** @var \App\Models\DonHang $donHang */
+        $donHang = \App\Models\DonHang::with([
+                'chiTietDonHangs.sanPham',
+                'chiTietDonHangs.donViTinh',
+                'nguoiTao',
+                'khachHang',
+            ])
+            ->findOrFail($id);
+
+        // Build sections & totals cho báo giá
+        $quotePayload = $quoteBuilder->buildForDonHang($donHang);
+        $sections     = $quotePayload['sections'] ?? [];
+        $totals       = $quotePayload['totals'] ?? [];
+
+        // Meta báo giá: cho phép FE gửi override (query), nếu trống sẽ fallback DB/Blade
+        $meta = $request->only([
+            'nguoi_nhan',
+            'dien_thoai',
+            'phong_ban',
+            'email',
+            'cong_ty',
+            'dia_chi',
+            'du_an',
+            'dia_chi_thuc_hien',
+            'ngay_to_chuc',
+            'so_luong_khach',
+            'nguoi_bao_gia',
+            'chuc_vu_bao_gia',
+            'dien_thoai_bao_gia',
+            'email_bao_gia',
+            'ngay_bao_gia',
+            'han_hieu_luc',
+        ]);
+
+    // ===== Lấy meta Step 8 lưu trong đơn hàng (nếu có) =====
+    // 1. Hạng mục tuỳ biến theo nhóm gói
+    $categoryTitlesRaw = $donHang->quote_category_titles ?? [];
+    if (is_string($categoryTitlesRaw)) {
+        $decoded = json_decode($categoryTitlesRaw, true);
+        $categoryTitlesRaw = is_array($decoded) ? $decoded : [];
+    }
+    $meta['category_titles'] = is_array($categoryTitlesRaw) ? $categoryTitlesRaw : [];
+
+    // 2. Ghi chú cuối báo giá
+    $meta['footer_note'] = $donHang->quote_footer_note ?? null;
+
+    // 3. Người báo giá / Xác nhận báo giá
+    $meta['quote_signer_name']  = $donHang->quote_signer_name  ?? null;
+    $meta['quote_signer_title'] = $donHang->quote_signer_title ?? null;
+    $meta['quote_signer_phone'] = $donHang->quote_signer_phone ?? null;
+    $meta['quote_signer_email'] = $donHang->quote_signer_email ?? null;
+    $meta['quote_approver_note'] = $donHang->quote_approver_note ?? null;
+
+
+        // Tuỳ biến tiêu đề Hạng mục & ghi chú báo giá theo đơn
+        // Ưu tiên dữ liệu trong DB của đơn; nếu sau này muốn override qua query thì có thể merge thêm
+               // Tuỳ biến tiêu đề Hạng mục theo nhóm gói & ghi chú báo giá theo đơn
+        $meta['section_titles']   = $donHang->quote_section_titles ?? [];   // nếu sau này còn dùng
+        $meta['footer_note']      = $donHang->quote_footer_note ?? null;
+
+        // Cách 1: map Hạng mục gốc (hang_muc) => label tuỳ biến
+        $meta['category_titles']  = $donHang->quote_category_titles ?? [];
+
+        // Meta người báo giá / xác nhận báo giá
+        $meta['signer'] = [
+            'name'         => $donHang->quote_signer_name,
+            'title'        => $donHang->quote_signer_title,
+            'phone'        => $donHang->quote_signer_phone,
+            'email'        => $donHang->quote_signer_email,
+            'approver_note'=> $donHang->quote_approver_note,
+        ];
+
+        return view('bao-gia.template', [
+            'donHang'  => $donHang,
+            'sections' => $sections,
+            'totals'   => $totals,
+            'meta'     => $meta,
+        ]);
+
+    }
 
   // ==========================
   // 🔽 PRIVATE HELPER BỔ SUNG

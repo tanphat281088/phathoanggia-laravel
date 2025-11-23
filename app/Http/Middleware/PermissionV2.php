@@ -65,7 +65,11 @@ class PermissionV2
         'cong-no/customers'     => 'quan-ly-cong-no',
         'cong-no/export'        => 'quan-ly-cong-no',
 
-
+ // Quản lý chi phí (mới)
+        'quan-ly-chi-phi'           => 'quan-ly-chi-phi',
+        'quan-ly-chi-phi/de-xuat'   => 'quan-ly-chi-phi-de-xuat',
+        'quan-ly-chi-phi/thuc-te'   => 'quan-ly-chi-phi-thuc-te',
+        
         // Các module chuẩn 1:1
         'dashboard'            => 'dashboard',
         'vai-tro'              => 'vai-tro',
@@ -84,6 +88,11 @@ class PermissionV2
         'danh-muc-san-pham'    => 'danh-muc-san-pham',
         'don-vi-tinh'          => 'don-vi-tinh',
         'san-pham'             => 'san-pham',
+
+         // Gói dịch vụ (module mới)
+        'goi-dich-vu/groups'     => 'goi-dich-vu-groups',
+        'goi-dich-vu/categories' => 'goi-dich-vu-categories',
+        'goi-dich-vu/packages'   => 'goi-dich-vu-packages',
 
         'phieu-nhap-kho'       => 'phieu-nhap-kho',
         'phieu-xuat-kho'       => 'phieu-xuat-kho',

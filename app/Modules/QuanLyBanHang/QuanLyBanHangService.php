@@ -59,9 +59,10 @@ class QuanLyBanHangService
     {
         $data = DonHang::with(
             'khachHang',
-            'chiTietDonHangs.sanPham',
+            'chiTietDonHangs.sanPham.danhMuc', // 🔹 load luôn danh mục để biết group_code
             'chiTietDonHangs.donViTinh'
         )->find($id);
+
 
         if (! $data) {
             return CustomResponse::error('Dữ liệu không tồn tại');
@@ -218,6 +219,36 @@ class QuanLyBanHangService
     $data['danh_sach_san_pham'][$index]['base_cost']   = $baseCost;
     $data['danh_sach_san_pham'][$index]['cost_amount'] = $baseCost * $soLuong;
 
+                // ===== GÓI DỊCH VỤ: lưu flag + tên hiển thị + chi tiết gói =====
+                // FE sẽ gửi: is_package (bool), san_pham_label (tên gói), package_items (array)
+                $isPackage = !empty($item['is_package']);
+                $data['danh_sach_san_pham'][$index]['is_package'] = $isPackage;
+
+                if ($isPackage) {
+                    // ten_hien_thi: ưu tiên label FE gửi (tên gói), fallback tên sản phẩm
+                    $tenHienThi = $item['san_pham_label']
+                        ?? $item['title']
+                        ?? ($sanPham->ten_san_pham ?? null);
+                    $data['danh_sach_san_pham'][$index]['ten_hien_thi'] = $tenHienThi;
+
+                    // package_items: FE gửi array, DB lưu JSON
+                    $items = $item['package_items'] ?? null;
+                    if (is_array($items)) {
+                        $data['danh_sach_san_pham'][$index]['package_items'] = json_encode($items, JSON_UNESCAPED_UNICODE);
+                    } elseif (is_string($items)) {
+                        // nếu FE lỡ gửi sẵn JSON string
+                        $data['danh_sach_san_pham'][$index]['package_items'] = $items;
+                    }
+                } else {
+                    // Dòng thường: nếu FE có gửi san_pham_label thì cũng lưu vào ten_hien_thi
+                    if (!empty($item['san_pham_label'])) {
+                        $data['danh_sach_san_pham'][$index]['ten_hien_thi'] = $item['san_pham_label'];
+                    }
+                }
+
+                $tongTienHang += (int)$data['danh_sach_san_pham'][$index]['thanh_tien'];
+
+
                 $tongTienHang += (int)$data['danh_sach_san_pham'][$index]['thanh_tien'];
             }
 
@@ -344,15 +375,51 @@ class QuanLyBanHangService
             }
 
             foreach ($data['danh_sach_san_pham'] as $item) {
-                $item['don_hang_id'] = $donHang->id;
+                // Chuẩn hoá field cho bản ghi chi_tiet_don_hangs
+                $clean = [
+                    'don_hang_id'   => $donHang->id,
+                    'san_pham_id'   => $item['san_pham_id'],
+                    'don_vi_tinh_id'=> $item['don_vi_tinh_id'],
+                    'so_luong'      => $item['so_luong'],
+                    'don_gia'       => $item['don_gia'],
+                    'thanh_tien'    => $item['thanh_tien'],
+                    // Gói dịch vụ
+                    'is_package'    => !empty($item['is_package']),
+                    'ten_hien_thi'  => $item['ten_hien_thi'] ?? null,
+                     'hang_muc_goc'  => $item['hang_muc_goc'] ?? null,
+                       'package_items' => (function ($row) {
+            // Không phải gói thì luôn null
+            if (empty($row['is_package'])) {
+                return null;
+            }
 
-                // chi_tiet_don_hangs không còn cột loai_gia
-                if (array_key_exists('loai_gia', $item)) {
-                    unset($item['loai_gia']);
+            $val = $row['package_items'] ?? null;
+
+            if (is_array($val)) {
+                return json_encode($val, JSON_UNESCAPED_UNICODE);
+            }
+
+            // Nếu trước đó đã encode rồi (string JSON) → dùng lại
+            if (is_string($val) && $val !== '') {
+                return $val;
+            }
+
+            return null;
+        })($item),
+
+                ];
+
+                // Nếu có nguoi_tao/nguoi_cap_nhat thì thêm (tuỳ bảng cho phép null hay không)
+                if (!empty($dataDonHang['nguoi_tao'] ?? null)) {
+                    $clean['nguoi_tao'] = $dataDonHang['nguoi_tao'];
+                }
+                if (!empty($dataDonHang['nguoi_cap_nhat'] ?? null)) {
+                    $clean['nguoi_cap_nhat'] = $dataDonHang['nguoi_cap_nhat'];
                 }
 
-                ChiTietDonHang::create($item);
+                ChiTietDonHang::create($clean);
             }
+
 
             DB::commit();
             return $donHang->refresh();
@@ -379,20 +446,29 @@ class QuanLyBanHangService
         $allowed = null;
         if ($isDelivered && $isPaidFull) {
             return CustomResponse::error('Đơn đã giao và đã thanh toán đủ — khoá toàn bộ chỉnh sửa.', 422);
-        } elseif ($isDelivered) {
-            $allowed = ['loai_thanh_toan', 'so_tien_da_thanh_toan', 'ghi_chu'];
-        } elseif ($isOlderThan10Days) {
-            $allowed = [
-                'trang_thai_don_hang',
-                'nguoi_nhan_thoi_gian',
-                'loai_thanh_toan',
-                'so_tien_da_thanh_toan',
-                'ghi_chu',
-            ];
-            if (! $isDelivered) {
-                $allowed[] = 'dia_chi_giao_hang';
-            }
-        }
+} elseif ($isDelivered) {
+    $allowed = [
+        'loai_thanh_toan',
+        'so_tien_da_thanh_toan',
+        'ghi_chu',
+        'quote_section_titles',
+        'quote_footer_note',
+    ];
+} elseif ($isOlderThan10Days) {
+    $allowed = [
+        'trang_thai_don_hang',
+        'nguoi_nhan_thoi_gian',
+        'loai_thanh_toan',
+        'so_tien_da_thanh_toan',
+        'ghi_chu',
+        'quote_section_titles',
+        'quote_footer_note',
+    ];
+    if (! $isDelivered) {
+        $allowed[] = 'dia_chi_giao_hang';
+    }
+}
+
 
         if (is_array($allowed)) {
             $data = array_intersect_key($data, array_flip($allowed));
@@ -464,6 +540,32 @@ class QuanLyBanHangService
 
         $data['danh_sach_san_pham'][$index]['base_cost']   = $baseCost;
         $data['danh_sach_san_pham'][$index]['cost_amount'] = $baseCost * $soLuong;
+
+
+                // ===== GÓI DỊCH VỤ: lưu flag + tên hiển thị + chi tiết gói =====
+                $isPackage = !empty($item['is_package']);
+                $data['danh_sach_san_pham'][$index]['is_package'] = $isPackage;
+
+                if ($isPackage) {
+                    $tenHienThi = $item['san_pham_label']
+                        ?? $item['title']
+                        ?? ($sanPham->ten_san_pham ?? null);
+                    $data['danh_sach_san_pham'][$index]['ten_hien_thi'] = $tenHienThi;
+
+                    $items = $item['package_items'] ?? null;
+                    if (is_array($items)) {
+                        $data['danh_sach_san_pham'][$index]['package_items'] = json_encode($items, JSON_UNESCAPED_UNICODE);
+                    } elseif (is_string($items)) {
+                        $data['danh_sach_san_pham'][$index]['package_items'] = $items;
+                    }
+                } else {
+                    if (!empty($item['san_pham_label'])) {
+                        $data['danh_sach_san_pham'][$index]['ten_hien_thi'] = $item['san_pham_label'];
+                    }
+                }
+
+                $tongTienHang += (int)$data['danh_sach_san_pham'][$index]['thanh_tien'];
+
 
         $tongTienHang += (int)$data['danh_sach_san_pham'][$index]['thanh_tien'];
 
@@ -611,16 +713,49 @@ class QuanLyBanHangService
 
             if (isset($data['danh_sach_san_pham']) && is_array($data['danh_sach_san_pham'])) {
                 $donHang->chiTietDonHangs()->delete();
-                foreach ($data['danh_sach_san_pham'] as $item) {
-                    $item['don_hang_id'] = $donHang->id;
 
-                    if (array_key_exists('loai_gia', $item)) {
-                        unset($item['loai_gia']);
+                foreach ($data['danh_sach_san_pham'] as $item) {
+                    $clean = [
+                        'don_hang_id'   => $donHang->id,
+                        'san_pham_id'   => $item['san_pham_id'],
+                        'don_vi_tinh_id'=> $item['don_vi_tinh_id'],
+                        'so_luong'      => $item['so_luong'],
+                        'don_gia'       => $item['don_gia'],
+                        'thanh_tien'    => $item['thanh_tien'],
+                        'is_package'    => !empty($item['is_package']),
+                        'ten_hien_thi'  => $item['ten_hien_thi'] ?? null,
+                          'hang_muc_goc'  => $item['hang_muc_goc'] ?? null,
+                                   'package_items' => (function ($row) {
+                if (empty($row['is_package'])) {
+                    return null;
+                }
+
+                $val = $row['package_items'] ?? null;
+
+                if (is_array($val)) {
+                    return json_encode($val, JSON_UNESCAPED_UNICODE);
+                }
+
+                if (is_string($val) && $val !== '') {
+                    return $val;
+                }
+
+                return null;
+            })($item),
+
+                    ];
+
+                    if (!empty($dataDonHang['nguoi_tao'] ?? null)) {
+                        $clean['nguoi_tao'] = $dataDonHang['nguoi_tao'];
+                    }
+                    if (!empty($dataDonHang['nguoi_cap_nhat'] ?? null)) {
+                        $clean['nguoi_cap_nhat'] = $dataDonHang['nguoi_cap_nhat'];
                     }
 
-                    ChiTietDonHang::create($item);
+                    ChiTietDonHang::create($clean);
                 }
             }
+
 
             DB::commit();
             return $donHang->refresh();

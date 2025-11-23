@@ -3,12 +3,15 @@
 namespace App\Modules\SanPham;
 
 use App\Models\SanPham;
+use App\Models\DanhMucSanPham;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Exception;
 use App\Class\CustomResponse;
 use App\Class\FilterWithPagination;
 use App\Models\KhoTong;
+
 
 class SanPhamService
 {
@@ -36,6 +39,8 @@ class SanPhamService
                 ->leftJoin('users as nguoi_tao', 'san_phams.nguoi_tao', '=', 'nguoi_tao.id')
                 ->leftJoin('users as nguoi_cap_nhat', 'san_phams.nguoi_cap_nhat', '=', 'nguoi_cap_nhat.id')
                 ->leftJoin('loai_san_pham_masters as lsp', 'lsp.code', '=', 'san_phams.loai_san_pham')
+                // 🔹 JOIN với danh mục dịch vụ để dùng dms.parent_id
+                ->leftJoin('danh_muc_san_phams as dms', 'dms.id', '=', 'san_phams.danh_muc_id')
                 ->leftJoinSub($subNhap, 'pnk', function ($join) {
                     $join->on('pnk.san_pham_id', '=', 'san_phams.id');
                 })
@@ -43,6 +48,10 @@ class SanPhamService
                     $join->on('ton.san_pham_id', '=', 'san_phams.id');
                 });
 
+// 🔹 Lọc theo Danh mục Tầng 1 (nếu FE gửi parent_danh_muc_id)
+if (!empty($params['parent_danh_muc_id'])) {
+    $query->where('dms.parent_id', (int) $params['parent_danh_muc_id']);
+}
             // ===== (Optional) áp dụng bộ lọc nếu FE gửi — dùng đúng kiểu value, KHÔNG 'NGUYEN_LIEU:1'
             if (!empty($params['f']) && is_array($params['f'])) {
                 foreach ($params['f'] as $f) {
@@ -155,10 +164,15 @@ class SanPhamService
     {
         try {
             return DB::transaction(function () use ($data) {
-                // 🔹 Tự sinh mã nếu không có
-                if (empty($data['ma_san_pham'])) {
-                    $data['ma_san_pham'] = $this->generateMaSanPham($data['loai_san_pham'] ?? null);
-                }
+// 🔹 Tự sinh mã nếu không có
+if (empty($data['ma_san_pham'])) {
+    $data['ma_san_pham'] = $this->generateMaSanPham(
+        $data['loai_san_pham'] ?? null,
+        $data['danh_muc_id'] ?? null
+    );
+}
+
+
 
                 $result = SanPham::create([
                     'ma_san_pham'        => $data['ma_san_pham'],
@@ -193,10 +207,6 @@ class SanPhamService
                     ]);
                 }
 
-                // Thêm ảnh nếu có
-                if (!empty($data['image'])) {
-                    $result->images()->create(['path' => $data['image']]);
-                }
 
 // ✅ Nếu là GÓI DỊCH VỤ (is_package=1) + có package_items => lưu chi tiết vào event_package_items
 if (!empty($data['package_items']) && is_array($data['package_items']) && !empty($data['is_package'])) {
@@ -318,6 +328,14 @@ if (array_key_exists('package_items', $data) && !empty($model->is_package)) {
         $digits = preg_replace('/\D+/', '', $qRaw);
 
         $query = SanPham::query()->withoutGlobalScopes(['withUserNames']);
+                // Lọc theo parent_danh_muc_id: lấy dịch vụ thuộc mọi danh mục con của 1 danh mục cha (tầng 1)
+        if (!empty($params['parent_danh_muc_id'])) {
+            $parentId = (int) $params['parent_danh_muc_id'];
+
+            $query->leftJoin('danh_muc_san_phams as dms', 'dms.id', '=', 'san_phams.danh_muc_id')
+                  ->where('dms.parent_id', $parentId);
+        }
+
 
         // Optional filter theo loại & danh mục
         if (!empty($params['loai_san_pham'])) {
@@ -439,37 +457,98 @@ if (array_key_exists('package_items', $data) && !empty($model->is_package)) {
 
     /**
      * ✅ Helper: tự sinh mã chi tiết dịch vụ / thiết bị / gói
-     * - DVNCC / DVSX / NL / GOI... tuỳ theo loai_san_pham
+     * - Prefix theo loại (DVNCC / DVSX / NL / GOI...)
+     * - + Prefix theo danh mục dịch vụ (Loa -> LOA, Mixer -> MIX, Microphone -> MIC...)
+     * - Ví dụ: DVSXLOA0001, DVSXMIX0001
      */
-    protected function generateMaSanPham(?string $loaiSanPham): string
-    {
-        // Prefix theo loại
-        switch ($loaiSanPham) {
-            case 'SP_NHA_CUNG_CAP':
-                $prefix = 'DVNCC';
-                break;
-            case 'SP_SAN_XUAT':
-                $prefix = 'DVSX';
-                break;
-            case 'NGUYEN_LIEU':
-                $prefix = 'NL';
-                break;
-            case 'GOI_DICH_VU':
-                $prefix = 'GOI';
-                break;
-            default:
-                $prefix = 'DV';
+    /**
+     * ✅ Helper: tự sinh mã chi tiết dịch vụ / thiết bị / gói
+     *
+     * - Prefix theo loại:
+     *   SP_NHA_CUNG_CAP -> DVNCC
+     *   SP_SAN_XUAT     -> DVSX
+     *   NGUYEN_LIEU     -> NL
+     *   GOI_DICH_VU     -> GOI
+     *   mặc định        -> DV
+     *
+     * - Thêm prefix theo danh mục (nếu có):
+     *   VD: Danh mục "Loa"  -> LOA  -> DVSXLOA0001
+     *       Danh mục "Mixer" -> MIX -> DVSXMIX0001
+     *
+     * - Đảm bảo KHÔNG TRÙNG: luôn tìm số nhỏ nhất chưa dùng với prefix đó.
+     */
+/**
+ * Sinh mã chi tiết dịch vụ / thiết bị **dựa vào danh mục cha liền kề**
+ *
+ * Quy ước:
+ *   - Nếu có danh_muc_id:
+ *        + Lấy ma_danh_muc của chính DANH MỤC đó làm prefix.
+ *        + Dịch vụ con: {ma_danh_muc}-{số thứ tự 2 chữ số}
+ *          VD: LOA0001-01, LOA0001-02, ...
+ *
+ *   - Nếu không có danh_muc_id:
+ *        + Fallback về prefix theo loại (DVSX, DVNCC, NL, GOI ...)
+ *        + Và chạy số 4 chữ số như cũ: DVSX0001, DVNCC0001, ...
+ */
+protected function generateMaSanPham(?string $loaiSanPham, ?int $danhMucId = null): string
+{
+    // Nếu có danh mục cha → ưu tiên sinh theo DANH MỤC
+    if ($danhMucId) {
+        $dm = DanhMucSanPham::find($danhMucId);
+        if ($dm && $dm->ma_danh_muc) {
+            $basePrefix = $dm->ma_danh_muc; // VD: LOA0001, MIX0003,...
+
+            // Tìm mã con lớn nhất hiện tại của danh mục này:
+            // pattern: {ma_danh_muc}-{NN}
+            $prefix = $basePrefix . '-';
+
+            $lastCode = SanPham::where('ma_san_pham', 'like', $prefix . '%')
+                ->orderBy('ma_san_pham', 'desc')
+                ->value('ma_san_pham');
+
+            $nextNumber = 1;
+            if ($lastCode && preg_match('/^' . preg_quote($prefix, '/') . '(\d+)$/', $lastCode, $m)) {
+                $nextNumber = (int) $m[1] + 1;
+            }
+
+            // 2 chữ số: 01, 02, ...
+            return $prefix . str_pad((string) $nextNumber, 2, '0', STR_PAD_LEFT);
         }
-
-        $lastCode = SanPham::where('ma_san_pham', 'like', $prefix . '%')
-            ->orderBy('ma_san_pham', 'desc')
-            ->value('ma_san_pham');
-
-        $nextNumber = 1;
-        if ($lastCode && preg_match('/^' . preg_quote($prefix, '/') . '(\d+)$/', $lastCode, $m)) {
-            $nextNumber = (int)$m[1] + 1;
-        }
-
-        return $prefix . str_pad((string)$nextNumber, 4, '0', STR_PAD_LEFT);
     }
+
+    // 🔻 Nếu không có danh_muc_id hoặc danh mục chưa có mã → fallback theo loại dịch vụ
+    switch ($loaiSanPham) {
+        case 'SP_NHA_CUNG_CAP':
+            $basePrefix = 'DVNCC';
+            break;
+        case 'SP_SAN_XUAT':
+            $basePrefix = 'DVSX';
+            break;
+        case 'NGUYEN_LIEU':
+            $basePrefix = 'NL';
+            break;
+        case 'GOI_DICH_VU':
+            $basePrefix = 'GOI';
+            break;
+        default:
+            $basePrefix = 'DV';
+    }
+
+    $prefix = $basePrefix;
+
+    $lastCode = SanPham::where('ma_san_pham', 'like', $prefix . '%')
+        ->orderBy('ma_san_pham', 'desc')
+        ->value('ma_san_pham');
+
+    $nextNumber = 1;
+    if ($lastCode && preg_match('/^' . preg_quote($prefix, '/') . '(\d+)$/', $lastCode, $m)) {
+        $nextNumber = (int) $m[1] + 1;
+    }
+
+    // 4 chữ số: 0001, 0002,...
+    return $prefix . str_pad((string) $nextNumber, 4, '0', STR_PAD_LEFT);
+}
+
+
+
 }
