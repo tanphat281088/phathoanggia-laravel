@@ -91,15 +91,25 @@ class QuoteBuilder
     }
 
     /**
+     * Public cho các service khác (như QuoteCostEditorBuilder) dùng lại full list dòng báo giá.
+     */
+    public function buildLinesForEditor(DonHang $donHang): Collection
+    {
+        return $this->buildLinesFromDonHang($donHang);
+    }
+
+    /**
      * Build toàn bộ các dòng báo giá (QuoteLine) từ chi tiết đơn hàng.
      *
      * Mỗi dòng có keys:
+     *  - chi_tiet_don_hang_id
      *  - section_key, section_name
-     *  - hang_muc
+     *  - hang_muc, hang_muc_goc
      *  - chi_tiet, chi_tiet_html (HTML nhiều dòng cho gói)
      *  - dvt, so_luong
      *  - gia_goc_don_vi, chi_phi (chi phí nội bộ – dùng cho tính toán, KH không thấy cột)
      *  - don_gia, thanh_tien
+     *  - is_package
      */
     protected function buildLinesFromDonHang(DonHang $donHang): Collection
     {
@@ -138,59 +148,58 @@ class QuoteBuilder
                 $groupCodeNorm = 'KHAC';
             }
 
-                        $sectionName = $this->mapGroupCodeToSectionName($groupCodeNorm);
+            $sectionName = $this->mapGroupCodeToSectionName($groupCodeNorm);
 
             // Tầng 1 (HẠNG MỤC):
-            // 🔹 Ưu tiên hang_muc_goc (Nhóm gói dịch vụ mà anh đã chọn trong modal)
-            // 🔹 Nếu chưa có (báo giá cũ) thì fallback về danh mục sản phẩm như cũ
+            // Ưu tiên hang_muc_goc (Nhóm gói dịch vụ) nếu có, fallback danh mục
             $hangMuc = $ct->hang_muc_goc
                 ?? $catInfo['level1_name']
                 ?? $catInfo['level2_name']
                 ?? $sectionName;
 
+// ===== Chi tiết: nếu là GÓI → list chi tiết dịch vụ con (CHỈ cho CSVC); nếu không → tên dịch vụ =====
+$chiTiet     = null;
+$chiTietHtml = null;
 
-            // ===== Chi tiết: nếu là GÓI → list chi tiết dịch vụ con; nếu không → tên dịch vụ =====
-            $chiTiet     = null;   // text thuần
-            $chiTietHtml = null;   // HTML nhiều dòng (cho Blade)
+// CHỈ CSVC mới dùng package_items để bung chi tiết
+if ($isPackage && !empty($packageItems) && $groupCodeNorm === 'CSVC') {
+    $partsText = [];
+    $partsHtml = [];
 
-            if ($isPackage && !empty($packageItems)) {
-                $partsText = [];
-                $partsHtml = [];
+    foreach ($packageItems as $pi) {
+        $name = $pi['ten_san_pham'] ?? '';
+        $qty  = $pi['so_luong'] ?? null;
+        $note = $pi['ghi_chu'] ?? '';
 
-                foreach ($packageItems as $pi) {
-                    $name = $pi['ten_san_pham'] ?? '';
-                    $qty  = $pi['so_luong'] ?? null;
-                    $note = $pi['ghi_chu'] ?? '';
+        if (!$name) {
+            continue;
+        }
 
-                    if (!$name) {
-                        continue;
-                    }
-
-                    // ===== Định dạng: 02 Loa..., 01 Mixer..., =====
-                    $label = $name;
-
-                    if ($qty !== null && $qty !== '') {
-                        $n = (float)$qty;
-                        if ($n > 0) {
-                            $qtyInt  = (int) round($n);
-                            $qtyText = str_pad((string)$qtyInt, 2, '0', STR_PAD_LEFT);
-                            $label   = $qtyText . ' ' . $name;
-                        }
-                    }
-
-                    if ($note) {
-                        $label .= ' (' . $note . ')';
-                    }
-
-                    $partsText[] = $label;
-                    $partsHtml[] = e($label);
-                }
-
-                if (!empty($partsText)) {
-                    $chiTiet     = implode(' • ', $partsText);
-                    $chiTietHtml = implode('<br>', $partsHtml);
-                }
+        // CHỈ CSVC mới giữ prefix 01/02
+        $label = $name;
+        if ($qty !== null && $qty !== '') {
+            $n = (float) $qty;
+            if ($n > 0) {
+                $qtyInt  = (int) round($n);
+                $qtyText = str_pad((string) $qtyInt, 2, '0', STR_PAD_LEFT);
+                $label   = $qtyText . ' ' . $name;
             }
+        }
+
+        if ($note) {
+            $label .= ' (' . $note . ')';
+        }
+
+        $partsText[] = $label;
+        $partsHtml[] = e($label);
+    }
+
+    if (!empty($partsText)) {
+        $chiTiet     = implode(' • ', $partsText);
+        $chiTietHtml = implode('<br>', $partsHtml);
+    }
+}
+
 
             // Nếu chưa có chi tiết từ gói, fallback: ten_hien_thi → tên dịch vụ
             if (!$chiTiet) {
@@ -234,13 +243,16 @@ class QuoteBuilder
             $donGia    = (float) ($ct->don_gia ?? 0);
             $thanhTien = (float) ($ct->thanh_tien ?? ($donGia * $soLuong));
 
-                $lines[] = [
+            $lines[] = [
+                // 🔹 ID dòng chi tiết đơn hàng – để map sang QuoteCostItem
+                'chi_tiet_don_hang_id' => (int) $ct->id,
+
                 'section_key'     => $groupCodeNorm,
                 'section_name'    => $sectionName,
 
                 'hang_muc'        => $hangMuc,
                 'hang_muc_goc'    => $ct->hang_muc_goc,
-                'is_package'      => (bool) ($ct->is_package ?? false), // 🔹 THÊM DÒNG NÀY
+                'is_package'      => (bool) ($ct->is_package ?? false),
 
                 'chi_tiet'        => $chiTiet,
                 'chi_tiet_html'   => $chiTietHtml,  // dùng trong Blade để xuống dòng
@@ -254,7 +266,6 @@ class QuoteBuilder
                 'don_gia'         => (int) round($donGia),
                 'thanh_tien'      => (int) round($thanhTien),
             ];
-
         }
 
         return collect($lines);

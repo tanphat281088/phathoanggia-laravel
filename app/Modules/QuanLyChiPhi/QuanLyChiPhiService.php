@@ -138,16 +138,16 @@ class QuanLyChiPhiService
      *  - Các field header (status, note, total_revenue nếu muốn override)
      *  - items: [
      *      [
-     *          'id'                    => (tùy chọn, giai đoạn 1 có thể bỏ qua, luôn create mới),
+     *          'id'                    => (tùy chọn, hiện tại luôn create mới),
      *          'chi_tiet_don_hang_id'  => nullable,
      *          'hang_muc_goc',
      *          'section_code',
      *          'line_no',
-     *          'description',
+     *          'description' | 'chi_tiet',
      *          'dvt',
-     *          'qty',
+     *          'qty' | 'so_luong',
      *          'supplier_id',
-     *          'supplier_name',
+     *          'supplier_name' | 'sup',
      *          'cost_unit_price',
      *          'cost_total_amount',
      *          'sell_unit_price',
@@ -156,134 +156,142 @@ class QuanLyChiPhiService
      *      ],
      *    ]
      */
-public function update(int $id, array $data)
-{
-    try {
-        return DB::transaction(function () use ($id, $data) {
-            /** @var \App\Models\QuoteCost $cost */
-            $cost = QuoteCost::findOrFail($id);
+    public function update(int $id, array $data)
+    {
+        try {
+            return DB::transaction(function () use ($id, $data) {
+                /** @var \App\Models\QuoteCost $cost */
+                $cost = QuoteCost::findOrFail($id);
 
-            // ===== LỌC & DỌN DỮ LIỆU TỪ FE =====
-            // Không cho sửa các field sau:
-            //  - id, don_hang_id, type (loại bảng chi phí)
-            //  - don_hang / donHang (object báo giá gốc)
-            //  - created_at / updated_at (để Eloquent tự quản)
-            unset(
-                $data['id'],
-                $data['don_hang_id'],
-                $data['type'],
-                $data['don_hang'],
-                $data['donHang'],
-                $data['created_at'],
-                $data['updated_at']
-            );
+                // ===== LỌC & DỌN DỮ LIỆU TỪ FE =====
+                // Không cho FE sửa các field này
+                unset(
+                    $data['id'],
+                    $data['don_hang_id'],
+                    $data['type'],
+                    $data['don_hang'],
+                    $data['donHang'],
+                    $data['created_at'],
+                    $data['updated_at']
+                );
 
-            // Tách items ra khỏi header
-            $items = $data['items'] ?? null;
-            unset($data['items']);
+                // Tách items ra khỏi header
+                $items = $data['items'] ?? null;
+                unset($data['items']);
 
-            // Nếu FE có cho phép chỉnh total_revenue: dùng giá trị mới, ngược lại giữ cũ
-            $totalRevenue = array_key_exists('total_revenue', $data)
-                ? (int) $data['total_revenue']
-                : (int) ($cost->total_revenue ?? 0);
+                // Nếu FE có cho phép chỉnh total_revenue: dùng giá trị mới, ngược lại giữ cũ
+                $totalRevenue = array_key_exists('total_revenue', $data)
+                    ? (int) $data['total_revenue']
+                    : (int) ($cost->total_revenue ?? 0);
 
-            // Cập nhật header trước (chưa động đến total_cost/margin)
-            $data['total_revenue']  = $totalRevenue;
-            $data['nguoi_cap_nhat'] = (string) (Auth::id() ?? $cost->nguoi_cap_nhat);
+                // Cập nhật header (chưa động tới total_cost/margin)
+                $data['total_revenue']  = $totalRevenue;
+                $data['nguoi_cap_nhat'] = (string) (Auth::id() ?? $cost->nguoi_cap_nhat);
 
-            // Nếu có status gửi lên thì ép về int 0|1|2 cho chắc
-            if (array_key_exists('status', $data)) {
-                $s = (int) $data['status'];
-                $data['status'] = in_array($s, [
-                    QuoteCost::STATUS_DRAFT,
-                    QuoteCost::STATUS_EDITING,
-                    QuoteCost::STATUS_LOCKED,
-                ], true) ? $s : QuoteCost::STATUS_DRAFT;
-            }
-
-            // Ghi header (chỉ với field đã dọn)
-            $cost->update($data);
-
-            // ===== SYNC DANH SÁCH DÒNG CHI PHÍ =====
-            $totalCost = 0;
-            $totalSell = 0;
-
-            if (is_array($items)) {
-                // Xoá hết dòng cũ, ghi lại mới (simple & an toàn)
-                QuoteCostItem::where('quote_cost_id', $cost->id)->delete();
-
-                foreach ($items as $row) {
-                    // Bỏ dòng hoàn toàn rỗng
-                    $hasSomething =
-                        !empty($row['description'] ?? null) ||
-                        !empty($row['qty'] ?? null) ||
-                        !empty($row['cost_unit_price'] ?? null) ||
-                        !empty($row['sell_unit_price'] ?? null);
-                    if (! $hasSomething) {
-                        continue;
-                    }
-
-                    $qty      = isset($row['qty']) ? (float) $row['qty'] : 0.0;
-                    $costUnit = isset($row['cost_unit_price']) ? (int) $row['cost_unit_price'] : 0;
-                    $sellUnit = isset($row['sell_unit_price']) ? (int) $row['sell_unit_price'] : 0;
-
-                    $costTotal = isset($row['cost_total_amount'])
-                        ? (int) $row['cost_total_amount']
-                        : (int) round($qty * $costUnit);
-
-                    $sellTotal = isset($row['sell_total_amount'])
-                        ? (int) $row['sell_total_amount']
-                        : (int) round($qty * $sellUnit);
-
-                    $item = QuoteCostItem::create([
-                        'quote_cost_id'         => $cost->id,
-                        'chi_tiet_don_hang_id'  => $row['chi_tiet_don_hang_id'] ?? null,
-                        'hang_muc_goc'          => $row['hang_muc_goc'] ?? null,
-                        'section_code'          => $row['section_code'] ?? null,
-                        'line_no'               => isset($row['line_no']) ? (int) $row['line_no'] : 0,
-                        'description'           => $row['description'] ?? null,
-                        'dvt'                   => $row['dvt'] ?? null,
-                        'qty'                   => $qty,
-                        'supplier_id'           => $row['supplier_id'] ?? null,
-                        'supplier_name'         => $row['supplier_name'] ?? null,
-                        'cost_unit_price'       => $costUnit,
-                        'cost_total_amount'     => $costTotal,
-                        'sell_unit_price'       => $sellUnit,
-                        'sell_total_amount'     => $sellTotal,
-                        'note'                  => $row['note'] ?? null,
-                        'nguoi_tao'             => (string) (Auth::id() ?? $cost->nguoi_tao),
-                        'nguoi_cap_nhat'        => (string) (Auth::id() ?? $cost->nguoi_cap_nhat),
-                    ]);
-
-                    $totalCost += $item->cost_total_computed;
-                    $totalSell += $item->sell_total_computed;
+                // Chuẩn hoá status
+                if (array_key_exists('status', $data)) {
+                    $s = (int) $data['status'];
+                    $data['status'] = in_array($s, [
+                        QuoteCost::STATUS_DRAFT,
+                        QuoteCost::STATUS_EDITING,
+                        QuoteCost::STATUS_LOCKED,
+                    ], true) ? $s : QuoteCost::STATUS_DRAFT;
                 }
-            } else {
-                // Không gửi items -> giữ tổng chi phí cũ
-                $totalCost = (int) ($cost->total_cost ?? 0);
-                $totalSell = $totalRevenue;
-            }
 
-            // ===== TÍNH LẠI MARGIN & % =====
-            $margin        = $totalRevenue - $totalCost;
-            $marginPercent = $totalRevenue > 0
-                ? round($margin * 100 / $totalRevenue, 2)
-                : null;
+                $cost->update($data);
 
-            $cost->update([
-                'total_revenue'  => $totalRevenue,
-                'total_cost'     => $totalCost,
-                'total_margin'   => $margin,
-                'margin_percent' => $marginPercent,
-            ]);
+                // ===== SYNC DANH SÁCH DÒNG CHI PHÍ =====
+                $totalCost = 0;
+                $totalSell = 0;
 
-            return $cost->fresh(['donHang', 'items']);
-        });
-    } catch (Exception $e) {
-        return CustomResponse::error('Lỗi khi cập nhật bảng chi phí: ' . $e->getMessage());
+                if (is_array($items)) {
+                    // Xoá hết dòng cũ, ghi lại mới (đơn giản & an toàn)
+                    QuoteCostItem::where('quote_cost_id', $cost->id)->delete();
+
+                    foreach ($items as $row) {
+                        // Chuẩn hoá các field từ FE (bao gồm alias)
+                        $desc = $row['description'] ?? $row['chi_tiet'] ?? null;
+
+                        $qtyRaw = $row['qty'] ?? $row['so_luong'] ?? null;
+                        $qty    = $qtyRaw !== null ? (float) $qtyRaw : 0.0;
+
+                        $costUnit = isset($row['cost_unit_price'])
+                            ? (int) $row['cost_unit_price']
+                            : 0;
+
+                        $sellUnit = isset($row['sell_unit_price'])
+                            ? (int) $row['sell_unit_price']
+                            : 0;
+
+                        // Bỏ qua dòng hoàn toàn rỗng
+                        $hasSomething =
+                            !empty($desc) ||
+                            $qty > 0 ||
+                            $costUnit > 0 ||
+                            $sellUnit > 0;
+
+                        if (! $hasSomething) {
+                            continue;
+                        }
+
+                        $costTotal = isset($row['cost_total_amount'])
+                            ? (int) $row['cost_total_amount']
+                            : (int) round($qty * $costUnit);
+
+                        $sellTotal = isset($row['sell_total_amount'])
+                            ? (int) $row['sell_total_amount']
+                            : (int) round($qty * $sellUnit);
+
+                        $item = QuoteCostItem::create([
+                            'quote_cost_id'         => $cost->id,
+                            'chi_tiet_don_hang_id'  => $row['chi_tiet_don_hang_id'] ?? null,
+                            // Ưu tiên hang_muc_goc, fallback sang hang_muc nếu FE chỉ gửi field này
+                            'hang_muc_goc'          => $row['hang_muc_goc'] ?? ($row['hang_muc'] ?? null),
+                            'section_code'          => $row['section_code'] ?? null,
+                            'line_no'               => isset($row['line_no']) ? (int) $row['line_no'] : 0,
+                            'description'           => $desc,
+                            'dvt'                   => $row['dvt'] ?? null,
+                            'qty'                   => $qty,
+                            'supplier_id'           => $row['supplier_id'] ?? null,
+                            // Ưu tiên supplier_name, fallback sup (tên NCC trên UI)
+                            'supplier_name'         => $row['supplier_name'] ?? ($row['sup'] ?? null),
+                            'cost_unit_price'       => $costUnit,
+                            'cost_total_amount'     => $costTotal,
+                            'sell_unit_price'       => $sellUnit,
+                            'sell_total_amount'     => $sellTotal,
+                            'note'                  => $row['note'] ?? null,
+                            'nguoi_tao'             => (string) (Auth::id() ?? $cost->nguoi_tao),
+                            'nguoi_cap_nhat'        => (string) (Auth::id() ?? $cost->nguoi_cap_nhat),
+                        ]);
+
+                        $totalCost += $item->cost_total_computed;
+                        $totalSell += $item->sell_total_computed;
+                    }
+                } else {
+                    // Không gửi items -> giữ tổng chi phí cũ
+                    $totalCost = (int) ($cost->total_cost ?? 0);
+                    $totalSell = $totalRevenue;
+                }
+
+                // ===== TÍNH LẠI MARGIN & % =====
+                $margin        = $totalRevenue - $totalCost;
+                $marginPercent = $totalRevenue > 0
+                    ? round($margin * 100 / $totalRevenue, 2)
+                    : null;
+
+                $cost->update([
+                    'total_revenue'  => $totalRevenue,
+                    'total_cost'     => $totalCost,
+                    'total_margin'   => $margin,
+                    'margin_percent' => $marginPercent,
+                ]);
+
+                return $cost->fresh(['donHang', 'items']);
+            });
+        } catch (Exception $e) {
+            return CustomResponse::error('Lỗi khi cập nhật bảng chi phí: ' . $e->getMessage());
+        }
     }
-}
-
 
     /**
      * Xoá bảng chi phí (và toàn bộ dòng chi phí)

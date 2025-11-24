@@ -96,6 +96,17 @@ Route::get(
     [QuoteExcelController::class, 'exportDonHang']
 );
 
+// Xem / In PDF chi phí ĐỀ XUẤT (public, không cần JWT)
+Route::get(
+    '/quan-ly-chi-phi/de-xuat/{id}/pdf',
+    [QuanLyChiPhiController::class, 'exportDeXuatPdf']
+)->whereNumber('id');
+
+// Xem / In PDF chi phí THỰC TẾ (public, không cần JWT)
+Route::get(
+    '/quan-ly-chi-phi/thuc-te/{id}/pdf',
+    [QuanLyChiPhiController::class, 'exportThucTePdf']
+)->whereNumber('id');
 
 
 // ================== (KHUNG) Facebook Messenger Webhook — PUBLIC (no auth) ==================
@@ -362,8 +373,6 @@ Route::get('danh-sach-phan-quyen', [\App\Http\Controllers\Api\PermissionRegistry
       });
   });
 
-
-
   // QuanLyCongNo
   Route::prefix('quan-ly-cong-no')->group(function () {
     Route::get('/', [\App\Modules\QuanLyCongNo\QuanLyCongNoController::class, 'index']);
@@ -392,6 +401,16 @@ Route::get('danh-sach-phan-quyen', [\App\Http\Controllers\Api\PermissionRegistry
           [QuanLyChiPhiController::class, 'showDeXuat']
       )->whereNumber('id');
 
+
+
+// Dữ liệu EDIT chi phí đề xuất (layout giống báo giá)
+Route::get(
+    '/de-xuat/{id}/editor',
+    [QuanLyChiPhiController::class, 'editorDeXuat']
+)->whereNumber('id');
+
+
+      
       // Cập nhật bảng chi phí đề xuất
       Route::put(
           '/de-xuat/{id}',
@@ -419,17 +438,18 @@ Route::get('danh-sach-phan-quyen', [\App\Http\Controllers\Api\PermissionRegistry
           [QuanLyChiPhiController::class, 'createThucTeFromDonHang']
       )->whereNumber('donHangId');
 
-      // Chi tiết 1 bảng chi phí thực tế
-      Route::get(
-          '/thuc-te/{id}',
-          [QuanLyChiPhiController::class, 'showThucTe']
-      )->whereNumber('id');
+    // Chi tiết 1 bảng chi phí thực tế
+    Route::get(
+        '/thuc-te/{id}',
+        [QuanLyChiPhiController::class, 'showThucTe']
+    )->whereNumber('id');
 
-      // Cập nhật bảng chi phí thực tế
-      Route::put(
-          '/thuc-te/{id}',
-          [QuanLyChiPhiController::class, 'updateThucTe']
-      )->whereNumber('id');
+    // Cập nhật bảng chi phí thực tế
+    Route::put(
+        '/thuc-te/{id}',
+        [QuanLyChiPhiController::class, 'updateThucTe']
+    )->whereNumber('id');
+
 
       // Xoá bảng chi phí thực tế
       Route::delete(

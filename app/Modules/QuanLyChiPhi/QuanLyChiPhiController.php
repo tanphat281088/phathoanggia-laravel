@@ -7,7 +7,8 @@ use App\Class\Helper;
 use App\Http\Controllers\Controller;
 use App\Models\QuoteCost;
 use Illuminate\Http\Request;
-use App\Services\Quote\QuoteCostReportBuilder; // NEW: builder dữ liệu cho PDF chi phí
+use App\Services\Quote\QuoteCostReportBuilder; // builder dữ liệu cho PDF chi phí
+use App\Services\Quote\QuoteCostEditorBuilder; // NEW: builder dữ liệu cho màn hình EDIT chi phí
 
 class QuanLyChiPhiController extends Controller
 {
@@ -160,16 +161,6 @@ class QuanLyChiPhiController extends Controller
                 ? \Illuminate\Support\Carbon::parse($donHang->event_start)->format('d/m/Y H:i')
                 : '',
             'so_luong_khach'   => $donHang->guest_count ?? '',
-            // Nếu muốn dùng tuỳ biến Step 8 thì truyền thêm:
-            // 'category_titles'  => $donHang->quote_category_titles ?? [],
-            // 'footer_note'      => $donHang->quote_footer_note ?? null,
-            // 'signer'           => [
-            //     'name'          => $donHang->quote_signer_name,
-            //     'title'         => $donHang->quote_signer_title,
-            //     'phone'         => $donHang->quote_signer_phone,
-            //     'email'         => $donHang->quote_signer_email,
-            //     'approver_note' => $donHang->quote_approver_note,
-            // ],
         ];
 
         return view('chi-phi.template', [
@@ -178,6 +169,26 @@ class QuanLyChiPhiController extends Controller
             'totals'   => $totals,
             'meta'     => $meta,
         ]);
+    }
+
+    /**
+     * GET /api/quan-ly-chi-phi/de-xuat/{id}/editor
+     *
+     * - Build dữ liệu cho màn hình EDIT chi phí (modal lớn giống báo giá)
+     * - Trả về: sections + totals theo layout giống QuoteBuilder
+     */
+    public function editorDeXuat(
+        int $id,
+        QuoteCostEditorBuilder $editorBuilder
+    ) {
+        /** @var \App\Models\QuoteCost $cost */
+        $cost = QuoteCost::with(['donHang', 'items'])
+            ->where('type', QuoteCost::TYPE_DE_XUAT)
+            ->findOrFail($id);
+
+        $payload = $editorBuilder->build($cost);
+
+        return CustomResponse::success($payload);
     }
 
     // ======================================================================
