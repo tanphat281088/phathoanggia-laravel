@@ -54,14 +54,22 @@ class QuoteCostReportBuilder
     /**
      * Định nghĩa nhóm hạng mục chuẩn theo section_code
      */
-    protected array $sectionDefs = [
-        'NS'   => ['letter' => 'A', 'name' => 'Nhân sự'],
-        'CSVC' => ['letter' => 'B', 'name' => 'Cơ sở vật chất'],
-        'TIEC' => ['letter' => 'C', 'name' => 'Tiệc'],
-        'TD'   => ['letter' => 'D', 'name' => 'Thuê địa điểm'],
-        'CPK'  => ['letter' => 'E', 'name' => 'Chi phí khác'],
-        'OTHER'=> ['letter' => 'F', 'name' => 'Khác'],
-    ];
+protected array $sectionDefs = [
+    'NS'   => ['letter' => 'A', 'name' => 'Nhân sự'],
+    'CSVC' => ['letter' => 'B', 'name' => 'Cơ sở vật chất'],
+    'TIEC' => ['letter' => 'C', 'name' => 'Tiệc'],
+    'TD'   => ['letter' => 'D', 'name' => 'Thuê địa điểm'],
+    'CPK'  => ['letter' => 'E', 'name' => 'Chi phí khác'],
+
+    // 🔹 NHÓM MỚI
+    'CPQL' => ['letter' => 'F', 'name' => 'Chi phí quản lý'],
+    'CPFT' => ['letter' => 'G', 'name' => 'Chi phí phát sinh tăng'],
+    'CPFG' => ['letter' => 'H', 'name' => 'Chi phí phát sinh giảm'],
+    'GG'   => ['letter' => 'I', 'name' => 'Giảm giá'],
+
+    'OTHER'=> ['letter' => 'Z', 'name' => 'Khác'],
+];
+
 
     /**
      * Build dữ liệu cho 1 QuoteCost

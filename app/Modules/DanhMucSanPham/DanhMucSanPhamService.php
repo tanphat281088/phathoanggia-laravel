@@ -196,6 +196,18 @@ class DanhMucSanPhamService
             'THUE_DIA_DIEM'  => 'TD',
             'CPK'            => 'CPK',
             'CHI_PHI_KHAC'   => 'CPK',
+            // 🔹 NHÓM MỚI
+    'CPQL'                 => 'CPQL',
+    'CHI_PHI_QUAN_LY'      => 'CPQL',
+
+    'CPFT'                 => 'CPFT',
+    'CHI_PHI_PHAT_SINH_TANG'  => 'CPFT',
+
+    'CPFG'                 => 'CPFG',
+    'CHI_PHI_PHAT_SINH_GIAM'  => 'CPFG',
+
+    'GG'                   => 'GG',
+    'GIAM_GIA'             => 'GG',
         ];
 
         return $map[$groupCode] ?? null;
@@ -204,18 +216,25 @@ class DanhMucSanPhamService
     /**
      * Lấy prefix theo group_code ngắn
      */
-    protected function getGroupPrefix(?string $groupCode): string
-    {
-        $prefixMap = [
-            'NS'   => 'NS',
-            'CSVC' => 'CSVC',
-            'TIEC' => 'TIEC',
-            'TD'   => 'TD',
-            'CPK'  => 'CPK',
-        ];
+protected function getGroupPrefix(?string $groupCode): string
+{
+    $prefixMap = [
+        'NS'   => 'NS',
+        'CSVC' => 'CSVC',
+        'TIEC' => 'TIEC',
+        'TD'   => 'TD',
+        'CPK'  => 'CPK',
 
-        return $prefixMap[$groupCode] ?? 'DM';
-    }
+        // 🔹 NHÓM MỚI
+        'CPQL' => 'CPQL', // Chi phí quản lý
+        'CPFT' => 'CPFT', // Chi phí phát sinh tăng
+        'CPFG' => 'CPFG', // Chi phí phát sinh giảm
+        'GG'   => 'GG',   // Giảm giá
+    ];
+
+    return $prefixMap[$groupCode] ?? 'DM';
+}
+
 
     /**
      * Tự sinh mã danh mục

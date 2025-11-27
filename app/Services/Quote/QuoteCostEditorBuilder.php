@@ -87,7 +87,8 @@ class QuoteCostEditorBuilder
         $itemsByDetail = $items->keyBy('chi_tiet_don_hang_id');
 
         // Gom theo section_key NS/CSVC/TIEC/TD/CPK/KHAC
-        $sectionOrder = ['NS', 'CSVC', 'TIEC', 'TD', 'CPK', 'KHAC'];
+$sectionOrder = ['NS', 'CSVC', 'TIEC', 'TD', 'CPK', 'CPQL', 'CPFT', 'CPFG', 'GG', 'KHAC'];
+
         $letters      = range('A', 'Z');
 
         /** @var Collection $mapped */

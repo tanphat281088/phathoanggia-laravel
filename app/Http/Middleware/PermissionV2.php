@@ -99,6 +99,9 @@ class PermissionV2
         'quan-ly-ton-kho'      => 'quan-ly-ton-kho',
         'quan-ly-ban-hang'     => 'quan-ly-ban-hang',
 
+           // 🔹 Hợp đồng (mới)
+        'quan-ly-hop-dong'     => 'quan-ly-hop-dong',
+
         // Giao hàng: tách module riêng (đã chốt)
         'giao-hang'            => 'giao-hang',
 

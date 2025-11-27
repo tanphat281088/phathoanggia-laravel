@@ -323,7 +323,12 @@
   window.addEventListener('load', function () {
     var box = document.getElementById('printControls');
     if (box) box.style.display = 'block';
-    setTimeout(function () { window.print(); }, 500);
+
+    // ⬇️ ẨN BOX TRƯỚC KHI IN → PDF không bị ô trắng
+    setTimeout(function () {
+      if (box) box.style.display = 'none';
+      window.print();
+    }, 500);
   });
   function closePrint() {
     if (window.opener) {
@@ -333,6 +338,7 @@
     }
   }
 </script>
+
 
 <div class="page">
   <div class="page-frame">

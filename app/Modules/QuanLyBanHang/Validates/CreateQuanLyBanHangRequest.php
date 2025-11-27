@@ -112,9 +112,10 @@ class CreateQuanLyBanHangRequest extends FormRequest
       // Vẫn cho phép FE gửi nếu còn form cũ, nhưng sẽ bị bỏ trước khi ghi chi tiết.
       'danh_sach_san_pham.*.loai_gia'       => ['sometimes','nullable','integer', Rule::in([1, 2])],
 
-      // Giá & thành tiền: cho phép FE truyền để sửa trực tiếp khi lên báo giá
-      'danh_sach_san_pham.*.don_gia'        => ['nullable', 'numeric', 'min:0'],
-      'danh_sach_san_pham.*.thanh_tien'     => ['nullable', 'numeric', 'min:0'],
+            // Cho phép âm cho nhóm Giảm giá / Chi phí phát sinh giảm
+            'danh_sach_san_pham.*.don_gia'               => 'nullable|numeric',
+            'danh_sach_san_pham.*.thanh_tien'            => 'nullable|numeric',
+
 
             // GÓI DỊCH VỤ: flag + label + chi tiết gói
       'danh_sach_san_pham.*.is_package'      => ['sometimes', 'boolean'],

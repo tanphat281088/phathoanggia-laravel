@@ -225,7 +225,16 @@ return [
     'export'   => false,
 ]],
 
-
+// ===== QUẢN LÝ HỢP ĐỒNG =====
+['name' => 'quan-ly-hop-dong', 'actions' => [
+    'showMenu' => true,   // để hiện group "Quản lý HĐ + TL" / "Quản lý Hợp đồng" trên Sidebar
+    'index'    => false,  // GET /quan-ly-hop-dong
+    'show'     => false,  // GET /quan-ly-hop-dong/{id}
+    'create'   => false,  // POST /quan-ly-hop-dong (sau này nếu có)
+    'edit'     => false,  // PUT/PATCH /quan-ly-hop-dong/{id}
+    'delete'   => false,  // DELETE /quan-ly-hop-dong/{id}
+    'export'   => false,  // GET /.../export-docx|export-pdf (sau này)
+]],
 // ===== NHÂN SỰ → BẢNG LƯƠNG =====
 ['name' => 'payrollMe', 'actions' => [
     // 7 action chuẩn (dù không dùng hết, vẫn khai báo để form Vai trò không lỗi)

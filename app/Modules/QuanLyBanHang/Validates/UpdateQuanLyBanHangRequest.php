@@ -106,9 +106,9 @@ class UpdateQuanLyBanHangRequest extends FormRequest
 
       // ❌ EVENT: loai_gia không còn trong DB, chỉ cho phép FE gửi nếu còn form cũ
       'danh_sach_san_pham.*.loai_gia'        => ['sometimes','nullable','integer', Rule::in([1,2])],
-
-      'danh_sach_san_pham.*.don_gia'         => ['sometimes','nullable','numeric','min:0'],
-      'danh_sach_san_pham.*.thanh_tien'      => ['sometimes','nullable','numeric','min:0'],
+   // ✅ CHO PHÉP ÂM để dùng cho Giảm giá & Chi phí phát sinh giảm
+      'danh_sach_san_pham.*.don_gia'         => ['sometimes','nullable','numeric'],
+      'danh_sach_san_pham.*.thanh_tien'      => ['sometimes','nullable','numeric'],
 
             // GÓI DỊCH VỤ: flag + label + chi tiết gói
       'danh_sach_san_pham.*.is_package'      => ['sometimes', 'boolean'],

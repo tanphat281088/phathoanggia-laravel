@@ -144,7 +144,27 @@ class QuanLyBanHangService
         }
     }
 
+/**
+ * Nếu dòng thuộc nhóm GIẢM GIÁ hoặc CHI PHÍ PHÁT SINH GIẢM
+ *  - section_code = GG  hoặc CPFG
+ *  → luôn trả về đơn giá âm.
+ */
+private function normalizeNegativePriceForSection(?string $sectionCode, int $unitPrice): int
+{
+    $code = strtoupper(trim((string) $sectionCode));
+
+    if (in_array($code, ['GG', 'CPFG'], true)) {
+        return -abs($unitPrice);
+    }
+
+    return $unitPrice;
+}
+
+
     /**
+     * Tạo mới dữ liệu (BÁO GIÁ SỰ KIỆN)
+     */
+       /**
      * Tạo mới dữ liệu (BÁO GIÁ SỰ KIỆN)
      */
     public function create(array $data)
@@ -163,92 +183,82 @@ class QuanLyBanHangService
 
                 $userPrice = isset($item['don_gia']) ? (int)$item['don_gia'] : null;
 
+                /** @var \App\Models\SanPham|null $sanPham */
                 $sanPham = SanPham::find($item['san_pham_id'] ?? null);
                 if (! $sanPham && $userPrice === null) {
                     throw new Exception('Dịch vụ ID ' . ($item['san_pham_id'] ?? 'NULL') . ' không tồn tại');
                 }
 
-                if ($userPrice !== null && $userPrice >= 0) {
+                // SECTION_CODE: ưu tiên payload, fallback group_code từ danh mục
+                $sectionCode = $item['section_code'] ?? null;
+                if ($sectionCode === null && $sanPham && $sanPham->danhMuc) {
+                    $sectionCode = $sanPham->danhMuc->group_code; // NS/CSVC/TIEC/TD/CPK/CPQL/CPFT/CPFG/GG
+                }
+                $sectionCodeUpper = $sectionCode ? strtoupper($sectionCode) : null;
+                $data['danh_sach_san_pham'][$index]['section_code'] = $sectionCodeUpper;
+
+                // Đơn giá: dùng giá nhập mặc định nếu FE không gửi
+                if ($userPrice !== null) {
                     $usedPrice = $userPrice;
                 } else {
                     $usedPrice = (int)($sanPham->gia_nhap_mac_dinh ?? 0);
                 }
 
-                if ($usedPrice < 0) {
-                    $usedPrice = 0;
-                }
+                // 🔹 Ép âm nếu là GIẢM GIÁ hoặc CHI PHÍ PHÁT SINH GIẢM
+                $usedPrice = $this->normalizeNegativePriceForSection($sectionCodeUpper, $usedPrice);
 
                 $data['danh_sach_san_pham'][$index]['don_gia']    = $usedPrice;
                 $data['danh_sach_san_pham'][$index]['thanh_tien'] = $soLuong * $usedPrice;
-    // ===== SECTION & COST cho báo giá sự kiện =====
 
-    // SECTION_CODE:
-    // Ưu tiên: payload gửi lên (danh_sach_san_pham.*.section_code),
-    // nếu không có thì lấy group_code từ danh mục dịch vụ (danhMuc.group_code).
-    $sectionCode = $item['section_code'] ?? null;
-    if ($sectionCode === null && $sanPham && $sanPham->danhMuc) {
-        $sectionCode = $sanPham->danhMuc->group_code; // A/B/C/D
-    }
-    $data['danh_sach_san_pham'][$index]['section_code'] = $sectionCode;
+                // ===== SECTION & COST cho báo giá sự kiện =====
 
-    // TITLE:
-    // Ưu tiên: payload gửi title riêng cho dòng,
-    // nếu không thì dùng tên dịch vụ.
-    if (isset($item['title']) && $item['title'] !== '') {
-        $data['danh_sach_san_pham'][$index]['title'] = $item['title'];
-    } else {
-        $data['danh_sach_san_pham'][$index]['title'] = $sanPham ? $sanPham->ten_san_pham : null;
-    }
+                // TITLE
+                if (isset($item['title']) && $item['title'] !== '') {
+                    $data['danh_sach_san_pham'][$index]['title'] = $item['title'];
+                } else {
+                    $data['danh_sach_san_pham'][$index]['title'] = $sanPham ? $sanPham->ten_san_pham : null;
+                }
 
-    // DESCRIPTION:
-    // Cho phép FE gửi mô tả chi tiết (nếu không gửi thì để null).
-    if (isset($item['description']) && $item['description'] !== '') {
-        $data['danh_sach_san_pham'][$index]['description'] = $item['description'];
-    }
+                // DESCRIPTION
+                if (isset($item['description']) && $item['description'] !== '') {
+                    $data['danh_sach_san_pham'][$index]['description'] = $item['description'];
+                }
 
-    // BASE COST & COST AMOUNT:
-    // base_cost: giá vốn (mặc định = gia_nhap_mac_dinh, FE có thể override).
-    $baseCost = isset($item['base_cost'])
-        ? (int)$item['base_cost']
-        : (int)($sanPham->gia_nhap_mac_dinh ?? 0);
+                // BASE COST & COST AMOUNT
+                $baseCost = isset($item['base_cost'])
+                    ? (int)$item['base_cost']
+                    : (int)($sanPham->gia_nhap_mac_dinh ?? 0);
 
-    if ($baseCost < 0) {
-        $baseCost = 0;
-    }
+                if ($baseCost < 0) {
+                    $baseCost = 0;
+                }
 
-    $data['danh_sach_san_pham'][$index]['base_cost']   = $baseCost;
-    $data['danh_sach_san_pham'][$index]['cost_amount'] = $baseCost * $soLuong;
+                $data['danh_sach_san_pham'][$index]['base_cost']   = $baseCost;
+                $data['danh_sach_san_pham'][$index]['cost_amount'] = $baseCost * $soLuong;
 
                 // ===== GÓI DỊCH VỤ: lưu flag + tên hiển thị + chi tiết gói =====
-                // FE sẽ gửi: is_package (bool), san_pham_label (tên gói), package_items (array)
                 $isPackage = !empty($item['is_package']);
                 $data['danh_sach_san_pham'][$index]['is_package'] = $isPackage;
 
                 if ($isPackage) {
-                    // ten_hien_thi: ưu tiên label FE gửi (tên gói), fallback tên sản phẩm
                     $tenHienThi = $item['san_pham_label']
                         ?? $item['title']
                         ?? ($sanPham->ten_san_pham ?? null);
                     $data['danh_sach_san_pham'][$index]['ten_hien_thi'] = $tenHienThi;
 
-                    // package_items: FE gửi array, DB lưu JSON
-                    $items = $item['package_items'] ?? null;
-                    if (is_array($items)) {
-                        $data['danh_sach_san_pham'][$index]['package_items'] = json_encode($items, JSON_UNESCAPED_UNICODE);
-                    } elseif (is_string($items)) {
-                        // nếu FE lỡ gửi sẵn JSON string
-                        $data['danh_sach_san_pham'][$index]['package_items'] = $items;
+                    $itemsPkg = $item['package_items'] ?? null;
+                    if (is_array($itemsPkg)) {
+                        $data['danh_sach_san_pham'][$index]['package_items'] = json_encode($itemsPkg, JSON_UNESCAPED_UNICODE);
+                    } elseif (is_string($itemsPkg)) {
+                        $data['danh_sach_san_pham'][$index]['package_items'] = $itemsPkg;
                     }
                 } else {
-                    // Dòng thường: nếu FE có gửi san_pham_label thì cũng lưu vào ten_hien_thi
                     if (!empty($item['san_pham_label'])) {
                         $data['danh_sach_san_pham'][$index]['ten_hien_thi'] = $item['san_pham_label'];
                     }
                 }
 
-                $tongTienHang += (int)$data['danh_sach_san_pham'][$index]['thanh_tien'];
-
-
+                // Cộng tổng tiền hàng (mỗi dòng chỉ cộng 1 lần)
                 $tongTienHang += (int)$data['danh_sach_san_pham'][$index]['thanh_tien'];
             }
 
@@ -292,10 +302,9 @@ class QuanLyBanHangService
                 $memberPercent = 0.0;
             }
 
-            $memberAmount = (int) round($tongTienHang * $memberPercent / 100);
-            $totalDiscount = $manualDiscount + $memberAmount;
-
-            $chiPhi  = (int)($data['chi_phi'] ?? 0);
+            $memberAmount   = (int) round($tongTienHang * $memberPercent / 100);
+            $totalDiscount  = $manualDiscount + $memberAmount;
+            $chiPhi         = (int)($data['chi_phi'] ?? 0);
 
             // ===== VAT-AWARE TOTALS =====
             $taxMode = (int)($data['tax_mode'] ?? 0);
@@ -344,9 +353,9 @@ class QuanLyBanHangService
                 ], true) ? $v : DonHang::TRANG_THAI_CHUA_GIAO;
             }
 
-            $data['tong_tien_hang']             = (int)$tongTienHang;
-            $data['tong_tien_can_thanh_toan']   = (int)$tongTienCanThanhToan;
-            $data['tong_so_luong_san_pham']     = count($data['danh_sach_san_pham']);
+            $data['tong_tien_hang']           = (int)$tongTienHang;
+            $data['tong_tien_can_thanh_toan'] = (int)$tongTienCanThanhToan;
+            $data['tong_so_luong_san_pham']   = count($data['danh_sach_san_pham']);
 
             if (isset($data['khach_hang_id']) && $data['khach_hang_id'] != null) {
                 $khachHang = KhachHang::find($data['khach_hang_id']);
@@ -375,41 +384,31 @@ class QuanLyBanHangService
             }
 
             foreach ($data['danh_sach_san_pham'] as $item) {
-                // Chuẩn hoá field cho bản ghi chi_tiet_don_hangs
                 $clean = [
-                    'don_hang_id'   => $donHang->id,
-                    'san_pham_id'   => $item['san_pham_id'],
-                    'don_vi_tinh_id'=> $item['don_vi_tinh_id'],
-                    'so_luong'      => $item['so_luong'],
-                    'don_gia'       => $item['don_gia'],
-                    'thanh_tien'    => $item['thanh_tien'],
-                    // Gói dịch vụ
-                    'is_package'    => !empty($item['is_package']),
-                    'ten_hien_thi'  => $item['ten_hien_thi'] ?? null,
-                     'hang_muc_goc'  => $item['hang_muc_goc'] ?? null,
-                       'package_items' => (function ($row) {
-            // Không phải gói thì luôn null
-            if (empty($row['is_package'])) {
-                return null;
-            }
-
-            $val = $row['package_items'] ?? null;
-
-            if (is_array($val)) {
-                return json_encode($val, JSON_UNESCAPED_UNICODE);
-            }
-
-            // Nếu trước đó đã encode rồi (string JSON) → dùng lại
-            if (is_string($val) && $val !== '') {
-                return $val;
-            }
-
-            return null;
-        })($item),
-
+                    'don_hang_id'    => $donHang->id,
+                    'san_pham_id'    => $item['san_pham_id'],
+                    'don_vi_tinh_id' => $item['don_vi_tinh_id'],
+                    'so_luong'       => $item['so_luong'],
+                    'don_gia'        => $item['don_gia'],
+                    'thanh_tien'     => $item['thanh_tien'],
+                    'is_package'     => !empty($item['is_package']),
+                    'ten_hien_thi'   => $item['ten_hien_thi'] ?? null,
+                    'hang_muc_goc'   => $item['hang_muc_goc'] ?? null,
+                    'package_items'  => (function ($row) {
+                        if (empty($row['is_package'])) {
+                            return null;
+                        }
+                        $val = $row['package_items'] ?? null;
+                        if (is_array($val)) {
+                            return json_encode($val, JSON_UNESCAPED_UNICODE);
+                        }
+                        if (is_string($val) && $val !== '') {
+                            return $val;
+                        }
+                        return null;
+                    })($item),
                 ];
 
-                // Nếu có nguoi_tao/nguoi_cap_nhat thì thêm (tuỳ bảng cho phép null hay không)
                 if (!empty($dataDonHang['nguoi_tao'] ?? null)) {
                     $clean['nguoi_tao'] = $dataDonHang['nguoi_tao'];
                 }
@@ -420,7 +419,6 @@ class QuanLyBanHangService
                 ChiTietDonHang::create($clean);
             }
 
-
             DB::commit();
             return $donHang->refresh();
         } catch (Exception $e) {
@@ -428,6 +426,7 @@ class QuanLyBanHangService
             return CustomResponse::error($e->getMessage());
         }
     }
+
 
     /**
      * Cập nhật dữ liệu
@@ -484,94 +483,87 @@ class QuanLyBanHangService
             if ($allowMoneyRecalc) {
                 $tongTienHang = 0;
 
-                foreach ($data['danh_sach_san_pham'] as $index => $item) {
-                    $soLuong = (int)($item['so_luong'] ?? 0);
-                    if ($soLuong <= 0) {
-                        throw new Exception('Số lượng dịch vụ phải > 0');
-                    }
+foreach ($data['danh_sach_san_pham'] as $index => $item) {
+    $soLuong = (int)($item['so_luong'] ?? 0);
+    if ($soLuong <= 0) {
+        throw new Exception('Số lượng dịch vụ phải > 0');
+    }
 
-                    $userPrice = isset($item['don_gia']) ? (int)$item['don_gia'] : null;
+    $userPrice = isset($item['don_gia']) ? (int)$item['don_gia'] : null;
 
-                    $sanPham = SanPham::find($item['san_pham_id'] ?? null);
-                    if (! $sanPham && $userPrice === null) {
-                        throw new Exception('Dịch vụ ID ' . ($item['san_pham_id'] ?? 'NULL') . ' không tồn tại');
-                    }
+    /** @var \App\Models\SanPham|null $sanPham */
+    $sanPham = SanPham::find($item['san_pham_id'] ?? null);
+    if (! $sanPham && $userPrice === null) {
+        throw new Exception('Dịch vụ ID ' . ($item['san_pham_id'] ?? 'NULL') . ' không tồn tại');
+    }
 
-                    if ($userPrice !== null && $userPrice >= 0) {
-                        $usedPrice = $userPrice;
-                    } else {
-                        $usedPrice = (int)($sanPham->gia_nhap_mac_dinh ?? 0);
-                    }
+    // SECTION_CODE: ưu tiên payload, fallback từ danh mục
+    $sectionCode = $item['section_code'] ?? null;
+    if ($sectionCode === null && $sanPham && $sanPham->danhMuc) {
+        $sectionCode = $sanPham->danhMuc->group_code;
+    }
+    $sectionCodeUpper = $sectionCode ? strtoupper($sectionCode) : null;
+    $data['danh_sach_san_pham'][$index]['section_code'] = $sectionCodeUpper;
 
-                    if ($usedPrice < 0) {
-                        $usedPrice = 0;
-                    }
+    // Đơn giá
+    if ($userPrice !== null) {
+        $usedPrice = $userPrice;
+    } else {
+        $usedPrice = (int)($sanPham->gia_nhap_mac_dinh ?? 0);
+    }
 
-                    $data['danh_sach_san_pham'][$index]['don_gia']    = $usedPrice;
-                    $data['danh_sach_san_pham'][$index]['thanh_tien'] = $soLuong * $usedPrice;
-                            $data['danh_sach_san_pham'][$index]['don_gia']    = $usedPrice;
-        $data['danh_sach_san_pham'][$index]['thanh_tien'] = $soLuong * $usedPrice;
+    // Ép âm nếu GG / CPFG
+    $usedPrice = $this->normalizeNegativePriceForSection($sectionCodeUpper, $usedPrice);
 
-        // ===== SECTION & COST cho báo giá sự kiện =====
+    $data['danh_sach_san_pham'][$index]['don_gia']    = $usedPrice;
+    $data['danh_sach_san_pham'][$index]['thanh_tien'] = $soLuong * $usedPrice;
 
-        $sectionCode = $item['section_code'] ?? null;
-        if ($sectionCode === null && $sanPham && $sanPham->danhMuc) {
-            $sectionCode = $sanPham->danhMuc->group_code;
+    // SECTION & COST
+    if (isset($item['title']) && $item['title'] !== '') {
+        $data['danh_sach_san_pham'][$index]['title'] = $item['title'];
+    } else {
+        $data['danh_sach_san_pham'][$index]['title'] = $sanPham ? $sanPham->ten_san_pham : null;
+    }
+
+    if (isset($item['description']) && $item['description'] !== '') {
+        $data['danh_sach_san_pham'][$index]['description'] = $item['description'];
+    }
+
+    $baseCost = isset($item['base_cost'])
+        ? (int)$item['base_cost']
+        : (int)($sanPham->gia_nhap_mac_dinh ?? 0);
+    if ($baseCost < 0) {
+        $baseCost = 0;
+    }
+
+    $data['danh_sach_san_pham'][$index]['base_cost']   = $baseCost;
+    $data['danh_sach_san_pham'][$index]['cost_amount'] = $baseCost * $soLuong;
+
+    // Gói dịch vụ
+    $isPackage = !empty($item['is_package']);
+    $data['danh_sach_san_pham'][$index]['is_package'] = $isPackage;
+
+    if ($isPackage) {
+        $tenHienThi = $item['san_pham_label']
+            ?? $item['title']
+            ?? ($sanPham->ten_san_pham ?? null);
+        $data['danh_sach_san_pham'][$index]['ten_hien_thi'] = $tenHienThi;
+
+        $itemsPkg = $item['package_items'] ?? null;
+        if (is_array($itemsPkg)) {
+            $data['danh_sach_san_pham'][$index]['package_items'] = json_encode($itemsPkg, JSON_UNESCAPED_UNICODE);
+        } elseif (is_string($itemsPkg)) {
+            $data['danh_sach_san_pham'][$index]['package_items'] = $itemsPkg;
         }
-        $data['danh_sach_san_pham'][$index]['section_code'] = $sectionCode;
-
-        if (isset($item['title']) && $item['title'] !== '') {
-            $data['danh_sach_san_pham'][$index]['title'] = $item['title'];
-        } else {
-            $data['danh_sach_san_pham'][$index]['title'] = $sanPham ? $sanPham->ten_san_pham : null;
+    } else {
+        if (!empty($item['san_pham_label'])) {
+            $data['danh_sach_san_pham'][$index]['ten_hien_thi'] = $item['san_pham_label'];
         }
+    }
 
-        if (isset($item['description']) && $item['description'] !== '') {
-            $data['danh_sach_san_pham'][$index]['description'] = $item['description'];
-        }
+    $tongTienHang += (int)$data['danh_sach_san_pham'][$index]['thanh_tien'];
+}
 
-        $baseCost = isset($item['base_cost'])
-            ? (int)$item['base_cost']
-            : (int)($sanPham->gia_nhap_mac_dinh ?? 0);
-
-        if ($baseCost < 0) {
-            $baseCost = 0;
-        }
-
-        $data['danh_sach_san_pham'][$index]['base_cost']   = $baseCost;
-        $data['danh_sach_san_pham'][$index]['cost_amount'] = $baseCost * $soLuong;
-
-
-                // ===== GÓI DỊCH VỤ: lưu flag + tên hiển thị + chi tiết gói =====
-                $isPackage = !empty($item['is_package']);
-                $data['danh_sach_san_pham'][$index]['is_package'] = $isPackage;
-
-                if ($isPackage) {
-                    $tenHienThi = $item['san_pham_label']
-                        ?? $item['title']
-                        ?? ($sanPham->ten_san_pham ?? null);
-                    $data['danh_sach_san_pham'][$index]['ten_hien_thi'] = $tenHienThi;
-
-                    $items = $item['package_items'] ?? null;
-                    if (is_array($items)) {
-                        $data['danh_sach_san_pham'][$index]['package_items'] = json_encode($items, JSON_UNESCAPED_UNICODE);
-                    } elseif (is_string($items)) {
-                        $data['danh_sach_san_pham'][$index]['package_items'] = $items;
-                    }
-                } else {
-                    if (!empty($item['san_pham_label'])) {
-                        $data['danh_sach_san_pham'][$index]['ten_hien_thi'] = $item['san_pham_label'];
-                    }
-                }
-
-                $tongTienHang += (int)$data['danh_sach_san_pham'][$index]['thanh_tien'];
-
-
-        $tongTienHang += (int)$data['danh_sach_san_pham'][$index]['thanh_tien'];
-
-
-                    $tongTienHang += (int)$data['danh_sach_san_pham'][$index]['thanh_tien'];
-                }
 
                 // ===== GIẢM GIÁ: THỦ CÔNG + THÀNH VIÊN (UPDATE) =====
                 $manualDiscount = array_key_exists('giam_gia', $data)

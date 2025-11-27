@@ -38,7 +38,8 @@ class QuoteBuilder
         $lines = $this->buildLinesFromDonHang($donHang);
 
         // Gom group theo section_key (NS/CSVC/TIEC/TD/CPK/KHAC...)
-        $sectionOrder = ['NS', 'CSVC', 'TIEC', 'TD', 'CPK', 'KHAC'];
+        $sectionOrder = ['NS', 'CSVC', 'TIEC', 'TD', 'CPK', 'CPQL', 'CPFT', 'CPFG', 'GG', 'KHAC'];
+
 
         /** @var Collection $grouped */
         $grouped = $lines->groupBy('section_key')
@@ -353,6 +354,19 @@ if ($isPackage && !empty($packageItems) && $groupCodeNorm === 'CSVC') {
 
             'CPK'            => 'CPK',
             'CHI_PHI_KHAC'   => 'CPK',
+
+             // 🔹 NHÓM MỚI
+    'CPQL'                 => 'CPQL',
+    'CHI_PHI_QUAN_LY'      => 'CPQL',
+
+    'CPFT'                 => 'CPFT',
+    'CHI_PHI_PHAT_SINH_TANG'  => 'CPFT',
+
+    'CPFG'                 => 'CPFG',
+    'CHI_PHI_PHAT_SINH_GIAM'  => 'CPFG',
+
+    'GG'                   => 'GG',
+    'GIAM_GIA'             => 'GG',
         ];
 
         return $map[$groupCode] ?? null;
@@ -365,14 +379,22 @@ if ($isPackage && !empty($packageItems) && $groupCodeNorm === 'CSVC') {
     {
         $groupCode = strtoupper($groupCode);
 
-        $map = [
-            'NS'   => 'Nhân sự',
-            'CSVC' => 'Cơ sở vật chất',
-            'TIEC' => 'Tiệc',
-            'TD'   => 'Thuê địa điểm',
-            'CPK'  => 'Chi phí khác',
-            'KHAC' => 'Khác',
-        ];
+$map = [
+    'NS'   => 'Nhân sự',
+    'CSVC' => 'Cơ sở vật chất',
+    'TIEC' => 'Tiệc',
+    'TD'   => 'Thuê địa điểm',
+    'CPK'  => 'Chi phí khác',
+
+    // 🔹 NHÓM MỚI
+    'CPQL' => 'Chi phí quản lý',
+    'CPFT' => 'Chi phí phát sinh tăng',
+    'CPFG' => 'Chi phí phát sinh giảm',
+    'GG'   => 'Giảm giá',
+
+    'KHAC' => 'Khác',
+];
+
 
         return $map[$groupCode] ?? $groupCode;
     }

@@ -54,6 +54,9 @@ use App\Modules\CongNoKH\CongNoKhController; // MỚI: Công nợ khách hàng (
 use App\Http\Controllers\Cash\CashAuditController;  // ⬅️ thêm dòng này
 use App\Modules\QuanLyChiPhi\QuanLyChiPhiController; // MỚI: Quản lý chi phí
 
+use App\Modules\HopDong\HopDongController; // MỚI: Quản lý Hợp đồng
+
+
 use App\Http\Controllers\Reports\FinanceReportController; // NEW: Báo cáo Tài chính
 use App\Http\Controllers\Reports\CustomerReportController; // NEW: Báo cáo Khách hàng
 use App\Http\Controllers\Reports\PayrollExportController; // NEW: Export Bảng lương chi tiết
@@ -109,6 +112,25 @@ Route::get(
 )->whereNumber('id');
 
 
+// ===== HỢP ĐỒNG (DOCX/PDF) — PUBLIC (không cần JWT) =====
+Route::get(
+    '/quan-ly-hop-dong/{id}/export-docx',
+    [HopDongController::class, 'exportDocx']
+)->whereNumber('id');
+Route::get(
+    '/quan-ly-hop-dong/{id}/export-docx-bilingual',
+    [HopDongController::class, 'exportDocxBilingual']
+)->whereNumber('id'); // ⬅ THÊM NGUYÊN KHỐI NÀY
+Route::get(
+    '/quan-ly-hop-dong/{id}/export-pdf',
+    [HopDongController::class, 'exportPdf']
+)->whereNumber('id');
+
+/** 🔍 PREVIEW HTML HỢP ĐỒNG (xem tổng thể trước khi export) */
+Route::get(
+    '/quan-ly-hop-dong/{id}/preview',
+    [HopDongController::class, 'preview']
+)->whereNumber('id');
 // ================== (KHUNG) Facebook Messenger Webhook — PUBLIC (no auth) ==================
 Route::prefix('fb')->group(function () {
     Route::get('/webhook',  [MessengerWebhookController::class, 'verify']);
@@ -456,6 +478,32 @@ Route::get(
           '/thuc-te/{id}',
           [QuanLyChiPhiController::class, 'destroyThucTe']
       )->whereNumber('id');
+  });
+
+  // ===== Quản lý Hợp đồng (HĐ dịch vụ) =====
+  Route::prefix('quan-ly-hop-dong')->group(function () {
+      // Danh sách HĐ
+      Route::get('/', [HopDongController::class, 'index']);
+
+      // Tạo (hoặc lấy lại) HĐ từ Báo giá
+      Route::post('/from-quote/{donHangId}', [HopDongController::class, 'createFromQuote'])
+          ->whereNumber('donHangId');
+
+      // Chi tiết 1 HĐ
+      Route::get('/{id}', [HopDongController::class, 'show'])
+          ->whereNumber('id');
+
+      // Cập nhật HĐ
+      Route::put('/{id}', [HopDongController::class, 'update'])
+          ->whereNumber('id');
+      Route::patch('/{id}', [HopDongController::class, 'update'])
+          ->whereNumber('id');
+
+      // Xoá HĐ (chỉ khi status = Nháp, policy trong Controller)
+      Route::delete('/{id}', [HopDongController::class, 'destroy'])
+          ->whereNumber('id');
+
+    
   });
   // PhieuNhapKho
   Route::prefix('phieu-nhap-kho')->group(function () {

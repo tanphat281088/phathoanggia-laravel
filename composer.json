@@ -16,6 +16,7 @@
         "laravel/tinker": "^2.10.1",
         "league/csv": "^9.27",
         "maatwebsite/excel": "^3.1",
+        "phpoffice/phpword": "^1.4",
         "tymon/jwt-auth": "^2.2"
     },
     "require-dev": {

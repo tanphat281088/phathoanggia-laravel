@@ -141,7 +141,12 @@
         ];
         $tongThanhTienBangChu = vnNumberToText($tongThanhTien);
 
-      
+             // ===== TEXT THUẾ THEO tax_mode =====
+        $taxMode = (int)($donHang->tax_mode ?? 0);
+        $vatText = $taxMode === 1
+            ? 'Thuế phí: Giá trên đã bao gồm thuế VAT.'
+            : 'Thuế phí: Giá trên chưa bao gồm thuế VAT.';
+ 
     @endphp
 
 
@@ -293,16 +298,19 @@
         .sign-table td{
             border:1px solid #000;
             padding:4px 3px;
-            text-align:center;
-           vertical-align:middle;
+            vertical-align:top;
+            text-align:left;
+            width:50%;              /* 2 cột luôn 50% - 50% */
         }
-        .sign-header{
+        .sign-header td{
             background:#f9b000;
             font-weight:700;
+            text-align:center;
         }
         .sign-note{
             margin-top:28px;
             font-style:italic;
+            text-align:center;
         }
 
         .footer-company{
@@ -334,7 +342,12 @@
     window.addEventListener('load', function () {
       var box = document.getElementById('printControls');
       if (box) box.style.display = 'block';
-      setTimeout(function () { window.print(); }, 500);
+
+      // ⬇️ ẨN BOX TRƯỚC KHI IN → PDF không bị ô trắng
+      setTimeout(function () {
+        if (box) box.style.display = 'none';
+        window.print();
+      }, 500);
     });
     function closePrint() {
       if (window.opener) {
@@ -344,6 +357,7 @@
       }
     }
   </script>
+
 
   <div class="page">
     <div class="page-frame">
@@ -567,36 +581,132 @@
 
     </table>
 
-    {{-- ========== TỔNG CHI PHÍ & GHI CHÚ ========== --}}
-    <div class="summary-block">
+
+    {{-- ===== TÍNH TỔNG TRƯỚC / SAU VAT ===== --}}
+    @php
+        // 0 = không thuế, 1 = có VAT
+        $taxModeBlade  = (int)($donHang->tax_mode ?? 0);
+        $vatRateBlade  = $donHang->vat_rate !== null ? (float)$donHang->vat_rate : null;
+
+        // Nếu BE có lưu subtotal/vat_amount/grand_total thì ưu tiên dùng,
+        // nếu không thì fallback từ $tongThanhTien (tổng trước VAT)
+        $subtotalBlade   = $donHang->subtotal   !== null ? (int)$donHang->subtotal   : $tongThanhTien;
+        $vatAmountBlade  = $donHang->vat_amount !== null ? (int)$donHang->vat_amount : 0;
+        $grandTotalBlade = $donHang->grand_total !== null
+            ? (int)$donHang->grand_total
+            : ($taxModeBlade === 1 ? $subtotalBlade + $vatAmountBlade : $subtotalBlade);
+
+        // Bằng chữ: nếu có VAT thì đọc theo tổng sau VAT
+        if ($taxModeBlade === 1) {
+            $tongThanhTienBangChu = vnNumberToText($grandTotalBlade);
+        }
+    @endphp
+
+
+{{-- ========== TỔNG CHI PHÍ (TRƯỚC / SAU VAT) ========== --}}
+<div class="summary-block">
+    @if ($taxModeBlade === 1)
+        {{-- Có VAT --}}
         <div class="summary-row">
-            <span class="summary-label">TỔNG CHI PHÍ:</span>
-            <span class="summary-label">{{ number_format($tongThanhTien, 0, ',', '.') }} đ</span>
+            <span class="summary-label">TỔNG CHI PHÍ TRƯỚC VAT:</span>
+            <span class="summary-label">
+                {{ number_format($subtotalBlade, 0, ',', '.') }} đ
+            </span>
+        </div>
+        <div class="summary-row">
+            @php
+                // format % đẹp: 8 hoặc 8,5…
+                $vatPercentText = $vatRateBlade !== null
+                    ? rtrim(rtrim(number_format($vatRateBlade, 2, ',', ''), '0'), ',')
+                    : '0';
+            @endphp
+            <span class="summary-label">VAT ({{ $vatPercentText }}%):</span>
+            <span class="summary-label">
+                {{ number_format($vatAmountBlade, 0, ',', '.') }} đ
+            </span>
+        </div>
+        <div class="summary-row">
+            <span class="summary-label">TỔNG CHI PHÍ SAU VAT:</span>
+            <span class="summary-label">
+                {{ number_format($grandTotalBlade, 0, ',', '.') }} đ
+            </span>
         </div>
         <div class="summary-row">
             <span class="summary-label">Bằng chữ:</span>
             <span>{{ $tongThanhTienBangChu }}</span>
         </div>
-    </div>
+    @else
+        {{-- Không thuế --}}
+        <div class="summary-row">
+            <span class="summary-label">TỔNG CHI PHÍ:</span>
+            <span class="summary-label">
+                {{ number_format($subtotalBlade, 0, ',', '.') }} đ
+            </span>
+        </div>
+        <div class="summary-row">
+            <span class="summary-label">Bằng chữ:</span>
+            <span>{{ $tongThanhTienBangChu }}</span>
+        </div>
+    @endif
+</div>
 
 
-    <div class="note-block">
-        <div><strong>Ghi chú:</strong></div>
 
-        @if (!empty($footerNote))
-            {{-- Ghi chú tuỳ biến (Step 8) – giữ xuống dòng --}}
-            <p>{!! nl2br(e($footerNote)) !!}</p>
-        @else
-            {{-- Ghi chú mặc định --}}
-            <ul>
-                <li>Giá trên đã bao gồm toàn bộ chi phí nhân sự và trang thiết bị theo mô tả trong bảng báo giá.</li>
-                <li>Giá chưa bao gồm thuế VAT (nếu có thỏa thuận khác sẽ ghi rõ trong hợp đồng).</li>
-                <li>Báo giá có hiệu lực đến ngày: {{ now()->addDays(7)->format('d/m/Y') }}.</li>
-            </ul>
-        @endif
-    </div>
+<div class="note-block">
+    <div><strong>Ghi chú:</strong></div>
+
+    @if (!empty($footerNote))
+        @php
+            // Tách footerNote thành từng dòng
+            $lines = preg_split('/\r\n|\r|\n/', (string) $footerNote);
+            $hasTaxLine = false;
+
+            foreach ($lines as &$line) {
+                $trim = ltrim($line);
+
+                // Nếu dòng đang bắt đầu bằng "Thuế phí:" thì thay bằng text VAT mới
+                if (preg_match('/^[-–•]?\s*Thuế phí:/ui', $trim)) {
+                    $line      = '- ' . $vatText;
+                    $hasTaxLine = true;
+                }
+            }
+            unset($line);
+
+            // Nếu footerNote KHÔNG có dòng Thuế phí → thêm mới ở cuối
+            if (! $hasTaxLine) {
+                $lines[] = '- ' . $vatText;
+            }
+
+            $footerProcessed = implode("\n", $lines);
+        @endphp
+
+        <p>{!! nl2br(e($footerProcessed)) !!}</p>
+    @else
+        {{-- Ghi chú mặc định theo yêu cầu --}}
+        <ul>
+            <li>
+                Lần 1: Thanh toán 50% ngay sau khi Hợp đồng hoặc Xác nhận dịch vụ được ký kết.
+            </li>
+            <li>
+                Lần 2: Thanh toán chi phí còn lại sau 2 ngày sau khi nhận được hóa đơn tài chính.
+            </li>
+            <li>
+                Chi phí bao gồm: Phí nhân công thi công; kỹ thuật lắp đặt; nhân sự chạy xuyên suốt chương trình.
+            </li>
+            <li>
+                Thời gian lắp đặt: Trong vòng 1 ngày.
+            </li>
+            <li>
+                {{ $vatText }}
+            </li>
+        </ul>
+    @endif
+</div>
 
 
+
+
+    {{-- ========== KHỐI CHỮ KÝ (2 CỘT: NGƯỜI BÁO GIÁ & XÁC NHẬN BÁO GIÁ) ========== --}}
     {{-- ========== KHỐI CHỮ KÝ (2 CỘT: NGƯỜI BÁO GIÁ & XÁC NHẬN BÁO GIÁ) ========== --}}
     <table class="sign-table">
         <tr class="sign-header">
@@ -604,6 +714,7 @@
             <td>XÁC NHẬN BÁO GIÁ</td>
         </tr>
         <tr>
+            {{-- Cột trái: NGƯỜI BÁO GIÁ --}}
             <td>
                 @php
                     $signerTitle = $signer['title'] ?? 'Phụ trách kinh doanh';
@@ -615,22 +726,55 @@
                 @if($signerName)
                     <div>{{ $signerName }}</div>
                 @endif
-                <div>{{ $signerTitle }}</div>
-                <div>Điện thoại: {{ $signerPhone }}</div>
-                <div>Email: {{ $signerEmail }}</div>
+
+                @if($signerTitle)
+                    <div>Chức vụ: {{ $signerTitle }}</div>
+                @endif
+
+                @if($signerPhone)
+                    <div>Điện thoại: {{ $signerPhone }}</div>
+                @endif
+
+                @if($signerEmail)
+                    <div>Email: {{ $signerEmail }}</div>
+                @endif
+
                 <div class="sign-note">(Ký, ghi rõ họ tên)</div>
             </td>
+
+            {{-- Cột phải: XÁC NHẬN BÁO GIÁ --}}
             <td>
+                            @php
+                $approverNote = $signer['approver_note'] ?? null;
+            @endphp
+
+            @if($approverNote)
                 @php
-                    $approverNote = $signer['approver_note'] ?? null;
+                    // Tách theo dòng (hỗ trợ dữ liệu cũ và mới)
+                    $lines = preg_split('/\r\n|\r|\n/', $approverNote);
                 @endphp
-                @if($approverNote)
-                    <div>{{ $approverNote }}</div>
-                @endif
+
+                @foreach($lines as $idx => $line)
+                    @php $text = trim($line); @endphp
+                    @if($text === '')
+                        @continue
+                    @endif
+
+                    @if($idx === 1 && mb_stripos($text, 'chức vụ') !== 0)
+                        {{-- Dòng thứ 2 mà chưa có "Chức vụ:" → tự thêm prefix --}}
+                        <div>Chức vụ: {{ $text }}</div>
+                    @else
+                        <div>{{ $text }}</div>
+                    @endif
+                @endforeach
+            @endif
+
+
                 <div class="sign-note">(Ký, ghi rõ họ tên)</div>
             </td>
         </tr>
     </table>
+
 
 
     <div class="footer-company">

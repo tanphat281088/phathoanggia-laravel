@@ -24,7 +24,8 @@ class CreateDanhMucSanPhamRequest extends FormRequest
              * - Cho phép cả code NGẮN:  NS, CSVC, TIEC, TD, CPK
              * - Và code DÀI cũ: NHAN_SU, CO_SO_VAT_CHAT, TIEC, THUE_DIA_DIEM, CHI_PHI_KHAC
              */
-            'group_code' => 'nullable|string|in:NS,CSVC,TIEC,TD,CPK,NHAN_SU,CO_SO_VAT_CHAT,THUE_DIA_DIEM,CHI_PHI_KHAC',
+           'group_code' => 'nullable|string|in:NS,CSVC,TIEC,TD,CPK,CPQL,CPFT,CPFG,GG,NHAN_SU,CO_SO_VAT_CHAT,THUE_DIA_DIEM,CHI_PHI_KHAC,CHI_PHI_QUAN_LY,CHI_PHI_PHAT_SINH_TANG,CHI_PHI_PHAT_SINH_GIAM,GIAM_GIA',
+
 
             'parent_id' => 'nullable|integer|exists:danh_muc_san_phams,id',
 
