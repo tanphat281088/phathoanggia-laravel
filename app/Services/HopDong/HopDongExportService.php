@@ -6,6 +6,9 @@ use App\Models\HopDong;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use PhpOffice\PhpWord\TemplateProcessor;
+use PhpOffice\PhpWord\Element\Table;
+use PhpOffice\PhpWord\SimpleType\Jc;
+use PhpOffice\PhpWord\Shared\Converter;
 use Symfony\Component\Process\Process;
 use Exception;
 
@@ -91,11 +94,15 @@ class HopDongExportService
             $processor->setValue($token, $value ?? '');
         }
 
-        // Đổ bảng HẠNG MỤC (cloneRow trên ITEM_STT)
-        $this->fillItemsTable($processor, $hopDong);
+            // Đổ bảng HẠNG MỤC vào placeholder ${TABLE_HANG_MUC}
+        $table = $this->buildItemsTableBlock($hopDong);
+        $processor->setComplexBlock('TABLE_HANG_MUC', $table);
 
         // Lưu DOCX
         $exportDir = storage_path('app/contracts/exports');
+
+
+
         if (! is_dir($exportDir)) {
             mkdir($exportDir, 0775, true);
         }
@@ -134,11 +141,15 @@ class HopDongExportService
             $processor->setValue($token, $value ?? '');
         }
 
-        // Đổ bảng HẠNG MỤC
-        $this->fillItemsTable($processor, $hopDong);
+             // Đổ bảng HẠNG MỤC vào placeholder ${TABLE_HANG_MUC}
+        $table = $this->buildItemsTableBlock($hopDong);
+        $processor->setComplexBlock('TABLE_HANG_MUC', $table);
 
         // Lưu DOCX
         $exportDir = storage_path('app/contracts/exports');
+
+
+
         if (! is_dir($exportDir)) {
             mkdir($exportDir, 0775, true);
         }
@@ -214,7 +225,10 @@ class HopDongExportService
             Log::error('[HopDongExport] LibreOffice convert xong nhưng không thấy file PDF: ' . $pdfPath);
             throw new Exception('Không tìm thấy file PDF sau khi convert: ' . $pdfPath);
         }
-
+ // Xoá file DOCX tạm sau khi đã convert sang PDF thành công
+    if (is_file($docxPath)) {
+        @unlink($docxPath);
+    }
         return $pdfPath;
     }
 
@@ -313,6 +327,36 @@ $ngayHdText = $this->formatNgayHopDongText($dateSource);
             $signatureB = ($xhB ? '(' . $xhB . ') ' : '') . $hopDong->ben_b_dai_dien;
         }
 
+        // ===== Tổng theo nhóm hạng mục (dùng cho các token SUM_NS, SUM_CSVC, ...) =====
+        $sumBySection = [
+            'NS'   => 0,
+            'CSVC' => 0,
+            'TIEC' => 0,
+            'TD'   => 0,
+            'CPK'  => 0,
+            'CPQL' => 0,
+            'CPFT' => 0,
+            'CPFG' => 0,
+            'GG'   => 0,
+        ];
+
+        foreach ($hopDong->items as $it) {
+            $code = strtoupper((string) ($it->section_code ?? ''));
+            if (! isset($sumBySection[$code])) {
+                continue;
+            }
+            $sumBySection[$code] += (int) ($it->thanh_tien ?? 0);
+        }
+
+        $sumNS   = $sumBySection['NS'];
+        $sumCSVC = $sumBySection['CSVC'];
+        $sumTIEC = $sumBySection['TIEC'];
+        $sumTD   = $sumBySection['TD'];
+        $sumCPK  = $sumBySection['CPK'];
+
+        // Chi phí quản lý: lấy riêng nhóm CPQL (F. Chi phí quản lý 10% giảm còn X%)
+        $chiPhiAmount = $sumBySection['CPQL'];
+
 
         // ===== Build map =====
         $data = [
@@ -349,13 +393,284 @@ $ngayHdText = $this->formatNgayHopDongText($dateSource);
             'DOT2_AMOUNT'      => $formatMoney($dot2Amount),
             'DOT2_AMOUNT_TEXT' => $dot2AmountText,
 
+            // Tổng theo từng nhóm hạng mục (dùng trong template Word)
+            'SUM_NS'          => $sumNS   > 0 ? $formatMoney($sumNS)   : '',
+            'SUM_CSVC'        => $sumCSVC > 0 ? $formatMoney($sumCSVC) : '',
+            'SUM_TIEC'        => $sumTIEC > 0 ? $formatMoney($sumTIEC) : '',
+            'SUM_TD'          => $sumTD   > 0 ? $formatMoney($sumTD)   : '',
+            'SUM_CPK'         => $sumCPK  > 0 ? $formatMoney($sumCPK)  : '',
+            'CHI_PHI_AMOUNT'  => $chiPhiAmount > 0 ? $formatMoney($chiPhiAmount) : '',
+
+            // Các token ROW_* hiện tại không dùng → cho về rỗng để tránh in ra ${ROW_NS}...
+            'ROW_NS'          => '',
+            'ROW_CSVC'        => '',
+            'ROW_TIEC'        => '',
+            'ROW_TD'          => '',
+            'ROW_CPK'         => '',
+            'ROW_CHI_PHI'     => '',
+
             // Chữ ký
             'SIGNATURE_A'      => $signatureA,
             'SIGNATURE_B'      => $signatureB,
         ];
 
+
         return $data;
     }
+
+    /**
+     * Build bảng hạng mục (TABLE_HANG_MUC) dùng cho complex block trong template Word.
+     * - Section nào có dữ liệu mới hiển thị (NS / CSVC / TIEC / TD / CPK / CPQL / CPFT / CPFG / GG).
+     * - Thứ tự section giống Báo giá.
+     */
+    /**
+     * Build bảng hạng mục (TABLE_HANG_MUC) dùng cho complex block trong template Word.
+     * - Section nào có dữ liệu mới hiển thị (NS / CSVC / TIEC / TD / CPK / CPQL / CPFT / CPFG / GG).
+     * - Thứ tự section giống Báo giá.
+     * - Cuối bảng có thêm các dòng: TỔNG CHI PHÍ TRƯỚC VAT / VAT / TỔNG CHI PHÍ SAU VAT / Bằng chữ.
+     */
+     /**
+     * Build bảng hạng mục (TABLE_HANG_MUC) dùng cho complex block trong template Word.
+     * - Section nào có dữ liệu mới hiển thị (NS / CSVC / TIEC / TD / CPK / CPQL / CPFT / CPFG / GG).
+     * - Thứ tự section giống Báo giá.
+     * - Cuối bảng có 3 dòng tổng với 2 cột (label + tiền).
+     */
+        /**
+     * Build bảng hạng mục (TABLE_HANG_MUC) dùng cho complex block trong template Word.
+     * - Section nào có dữ liệu mới hiển thị (NS / CSVC / TIEC / TD / CPK / CPQL / CPFT / CPFG / GG).
+     * - Thứ tự section giống Báo giá.
+     * - Cuối bảng có 3 dòng tổng với 2 ô (ô label rộng = 6 cột, ô tiền = cột 7).
+     * - Căn dọc giữa; ĐƠN GIÁ & THÀNH TIỀN căn phải; CHI TIẾT xuống dòng theo \n.
+     */
+    protected function buildItemsTableBlock(HopDong $hopDong): Table
+    {
+        $items = $hopDong->items;
+
+        // ===== Định nghĩa table & độ rộng 7 cột chuẩn (tỉ lệ gần giống báo giá) =====
+        // A4: rộng 8.27"; margin trái/phải 0.75" → vùng nội dung ~ 6.77"
+        $innerWidth = Converter::inchToTwip(6.7); // để dư 1 chút cho Word khỏi tự co giãn
+
+        $table = new Table([
+            'borderSize'       => 6,
+            'borderColor'      => '000000',
+            // Padding trong ô: cho chữ không dính nóc
+            'cellMarginLeft'   => 40,
+            'cellMarginRight'  => 40,
+            'cellMarginTop'    => 40,
+            'cellMarginBottom' => 40,
+            'width'            => $innerWidth,
+        ]);
+
+        // 7 cột: STT(5%) | HẠNG MỤC(15%) | CHI TIẾT(39%) | ĐVT(7%) | SL(7%) | ĐƠN GIÁ(13%) | THÀNH TIỀN(14%)
+        // (tăng nhẹ cột tiền để số không xuống dòng)
+        $colWidths = [
+            (int) round($innerWidth * 0.05), // STT
+            (int) round($innerWidth * 0.15), // HẠNG MỤC
+            (int) round($innerWidth * 0.39), // CHI TIẾT
+            (int) round($innerWidth * 0.07), // ĐVT
+            (int) round($innerWidth * 0.07), // SL
+            (int) round($innerWidth * 0.13), // ĐƠN GIÁ
+            (int) round($innerWidth * 0.14), // THÀNH TIỀN
+        ];
+
+
+        $fontHeader = ['name' => 'Times New Roman', 'size' => 11, 'bold' => true];
+        $fontBody   = ['name' => 'Times New Roman', 'size' => 11];
+        $fontBold   = ['name' => 'Times New Roman', 'size' => 11, 'bold' => true];
+
+        // căn paragraph
+        $paraLeft   = ['alignment' => Jc::START];
+        $paraCenter = ['alignment' => Jc::CENTER];
+        $paraRight  = ['alignment' => Jc::END];
+
+        // style cell: căn giữa theo chiều dọc cho tất cả ô
+        $cellVAlign = ['valign' => 'center'];
+
+        // ===== Header =====
+        $headerCells = ['STT', 'HẠNG MỤC', 'CHI TIẾT', 'ĐVT', 'SL', 'ĐƠN GIÁ', 'THÀNH TIỀN'];
+        $table->addRow();
+        foreach ($headerCells as $idx => $text) {
+            $table->addCell($colWidths[$idx], $cellVAlign)
+                  ->addText($text, $fontHeader, $paraCenter);
+        }
+
+        if (! $items || $items->isEmpty()) {
+            return $table;
+        }
+
+        // ===== Group theo section_code =====
+        $sectionOrder = ['NS', 'CSVC', 'TIEC', 'TD', 'CPK', 'CPQL', 'CPFT', 'CPFG', 'GG'];
+        $sectionNames = [
+            'NS'   => 'Nhân sự',
+            'CSVC' => 'Cơ sở vật chất',
+            'TIEC' => 'Tiệc',
+            'TD'   => 'Thuê địa điểm',
+            'CPK'  => 'Chi phí khác',
+            'CPQL' => 'Chi phí quản lý',
+            'CPFT' => 'Chi phí phát sinh tăng',
+            'CPFG' => 'Chi phí phát sinh giảm',
+            'GG'   => 'Giảm giá',
+        ];
+
+        $grouped = [];
+        foreach ($items as $it) {
+            $code = strtoupper((string) ($it->section_code ?? ''));
+            if ($code === '') {
+                $code = 'KHAC';
+            }
+            if (! isset($grouped[$code])) {
+                $grouped[$code] = [];
+            }
+            $grouped[$code][] = $it;
+        }
+
+        $formatMoney = function (int $n): string {
+            return number_format($n, 0, ',', '.');
+        };
+
+        $letters = range('A', 'Z');
+        $secIdx  = 0;
+        $stt     = 1;
+
+        // ===== Lặp từng section theo thứ tự chuẩn =====
+        foreach ($sectionOrder as $code) {
+            if (empty($grouped[$code])) {
+                continue;
+            }
+
+            $secItems = $grouped[$code];
+
+            // Header section: A. CƠ SỞ VẬT CHẤT, B. CHI PHÍ QUẢN LÝ, ...
+            $letter = $letters[$secIdx] ?? '';
+            $name   = $sectionNames[$code] ?? $code;
+            $secIdx++;
+
+                              // DÒNG HEADER SECTION: 1 ô, gộp hết 7 cột (giống PDF)
+            $table->addRow();
+            $table->addCell(null, [
+                'gridSpan' => 7,                              // ăn đủ 7 cột
+                'valign'   => $cellVAlign['valign'] ?? null,  // căn dọc giữa
+            ])->addText(
+                trim($letter !== '' ? $letter . '. ' . mb_strtoupper($name, 'UTF-8') : $name),
+                $fontHeader,
+                $paraLeft                                     // căn trái
+            );
+
+
+
+            // Các dòng chi tiết trong section
+            foreach ($secItems as $it) {
+                $table->addRow();
+
+                // STT
+                $table->addCell($colWidths[0], $cellVAlign)
+                      ->addText((string) $stt++, $fontBody, $paraCenter);
+
+                // HẠNG MỤC
+                $table->addCell($colWidths[1], $cellVAlign)
+                      ->addText((string) ($it->hang_muc ?? ''), $fontBody, $paraLeft);
+
+                // CHI TIẾT – chuẩn hoá xuống dòng theo \n, <br>, và dấu "•"
+                $cellChiTiet = $table->addCell($colWidths[2], $cellVAlign);
+                $chiTietStr  = (string) ($it->chi_tiet ?? '');
+
+                // Thay <br> bằng xuống dòng, tách thêm theo "•"
+                $chiTietNorm = preg_replace('/<br\s*\/?>/i', "\n", $chiTietStr);
+                // Mỗi dấu • sẽ bắt đầu một dòng mới (giữ lại ký tự •)
+                $chiTietNorm = str_replace('•', "\n•", $chiTietNorm);
+
+                $lines = preg_split('/\R/u', $chiTietNorm) ?: [$chiTietNorm];
+
+                $textRun = $cellChiTiet->addTextRun($paraLeft);
+                foreach ($lines as $idxLine => $line) {
+                    $line = trim($line);
+                    if ($line === '') {
+                        continue;
+                    }
+                    if ($idxLine > 0) {
+                        $textRun->addTextBreak();
+                    }
+                    $textRun->addText($line, $fontBody);
+                }
+
+
+                // ĐVT
+                $table->addCell($colWidths[3], $cellVAlign)
+                      ->addText((string) ($it->dvt ?? ''), $fontBody, $paraCenter);
+
+                // SL
+                $table->addCell($colWidths[4], $cellVAlign)
+                      ->addText((string) ($it->so_luong ?? ''), $fontBody, $paraCenter);
+
+                // ĐƠN GIÁ – căn phải
+                $table->addCell($colWidths[5], $cellVAlign)
+                      ->addText(
+                          $formatMoney((int) ($it->don_gia ?? 0)),
+                          $fontBody,
+                          $paraRight
+                      );
+
+                // THÀNH TIỀN – căn phải
+                $table->addCell($colWidths[6], $cellVAlign)
+                      ->addText(
+                          $formatMoney((int) ($it->thanh_tien ?? 0)),
+                          $fontBody,
+                          $paraRight
+                      );
+            }
+        }
+
+        // ===== Footer: 3 dòng tổng với 2 ô (ô label rộng = 6 cột, ô tiền = cột 7) =====
+        $tongTruocVat = (int) ($hopDong->tong_truoc_vat ?? 0);
+        $vatRate      = $hopDong->vat_rate !== null ? (float) $hopDong->vat_rate : 0.0;
+        $vatAmount    = (int) ($hopDong->vat_amount ?? 0);
+        $tongSauVat   = (int) ($hopDong->tong_sau_vat ?? 0);
+
+        $vatRateText = '';
+        if ($vatRate > 0) {
+            $vatRateText = rtrim(rtrim(number_format($vatRate, 2, ',', ''), '0'), ',') . '%';
+        }
+
+               // ===== Footer: 3 dòng tổng với 2 ô (ô label gộp 6 cột, ô tiền là cột 7) =====
+        $addTotalRow = function (string $label, string $value) use (
+            $table,
+            $fontBold,
+            $paraLeft,
+            $paraRight,
+            $cellVAlign
+        ) {
+            $table->addRow();
+
+            // Ô TRÁI: gộp 6 cột đầu (gridSpan = 6)
+            $table->addCell(null, [
+                'gridSpan' => 6,
+                'valign'   => $cellVAlign['valign'] ?? null,
+            ])->addText($label, $fontBold, $paraLeft);
+
+            // Ô PHẢI: cột tiền (cột thứ 7)
+            $table->addCell(null, [
+                'valign' => $cellVAlign['valign'] ?? null,
+            ])->addText($value, $fontBold, $paraRight);
+        };
+
+        // TỔNG CHI PHÍ TRƯỚC VAT
+        $addTotalRow('TỔNG CHI PHÍ TRƯỚC VAT:', $formatMoney($tongTruocVat));
+
+        // VAT (x%)
+        $labelVat = $vatRateText !== '' ? 'VAT (' . $vatRateText . '):' : 'VAT:';
+        $addTotalRow($labelVat, $formatMoney($vatAmount));
+
+        // TỔNG CHI PHÍ SAU VAT
+        $addTotalRow('TỔNG CHI PHÍ SAU VAT:', $formatMoney($tongSauVat));
+
+        return $table;
+    }
+
+
+
+
+
+
 
     /**
      * Đổ bảng Hạng mục Hợp đồng vào template DOCX

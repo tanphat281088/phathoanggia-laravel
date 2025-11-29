@@ -309,7 +309,8 @@ $benBChucVu    = 'Giám đốc';
         $lines = $this->quoteBuilder->buildLinesForEditor($donHang);
 
         // Group theo section_key, sort theo thứ tự A,B,C...
-        $sectionOrder = ['NS', 'CSVC', 'TIEC', 'TD', 'CPK', 'KHAC'];
+       $sectionOrder = ['NS', 'CSVC', 'TIEC', 'TD', 'CPK', 'CPQL', 'CPFT', 'CPFG', 'GG', 'KHAC'];
+
         $sections = $lines->groupBy('section_key')
             ->sortBy(function ($items, $key) use ($sectionOrder) {
                 $idx = array_search($key, $sectionOrder, true);

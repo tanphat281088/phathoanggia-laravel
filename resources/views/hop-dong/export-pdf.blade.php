@@ -121,8 +121,16 @@
         'TIEC' => 'Tiệc',
         'TD'   => 'Thuê địa điểm',
         'CPK'  => 'Chi phí khác',
+
+        // 🔹 Nhóm mới khớp với Báo giá
+        'CPQL' => 'Chi phí quản lý',
+        'CPFT' => 'Chi phí phát sinh tăng',
+        'CPFG' => 'Chi phí phát sinh giảm',
+        'GG'   => 'Giảm giá',
+
         'KHAC' => 'Khác',
     ];
+
     $grouped = [];
     foreach ($items as $it) {
         $code   = $it->section_code ?: 'KHAC';

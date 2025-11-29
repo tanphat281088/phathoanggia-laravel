@@ -269,26 +269,29 @@ class HopDongController extends Controller
     /**
      * GET /api/quan-ly-hop-dong/{id}/preview
      *
-     * - Preview toàn bộ Hợp đồng dạng HTML (giống file PDF)
-     * - Dùng cho nút Preview trên FE
+     * - Preview Hợp đồng bằng đúng file PDF giống exportPdf (mở inline)
      */
     public function preview(int $id, HopDongExportService $exportService)
     {
-        /** @var \App\Models\HopDong|null $hopDong */
-        $hopDong = \App\Models\HopDong::with(['donHang', 'items'])->find($id);
-
+        /** @var HopDong|null $hopDong */
+        $hopDong = HopDong::find($id);
         if (! $hopDong) {
             return CustomResponse::error('Hợp đồng không tồn tại');
         }
 
-        // Build nội dung đã thay token
-        $blocksResolved = $exportService->buildResolvedBlocks($hopDong);
+        try {
+            // Dùng chung service exportPdf: tạo PDF từ templates_token.docx
+            $pdfPath  = $exportService->exportPdf($hopDong);
+            $fileName = basename($pdfPath);
 
-        return view('hop-dong.export-pdf', [
-            'hopDong'        => $hopDong,
-            'donHang'        => $hopDong->donHang,
-            'blocksResolved' => $blocksResolved,
-            'items'          => $hopDong->items,
-        ]);
+            // Trả PDF dạng inline để xem trực tiếp (không force download)
+            return response()->file($pdfPath, [
+                'Content-Type'        => 'application/pdf',
+                'Content-Disposition' => 'inline; filename="' . $fileName . '"',
+            ]);
+        } catch (\Throwable $e) {
+            return CustomResponse::error('Lỗi khi preview PDF Hợp đồng: ' . $e->getMessage());
+        }
     }
+
 }
