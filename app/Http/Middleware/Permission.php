@@ -61,7 +61,11 @@ class Permission
         'api/zl/oauth',       // prefix: /api/zl/oauth/redirect|callback
         'api/zl/webhook',     // nếu dùng webhook OA
 
+ // ✅ BỎ kiểm tra Permission V1 cho mọi đường /api/attendance/*
+        'api/attendance',
 
+        // ✅ BỎ kiểm tra Permission V1 cho mọi đường /api/nhan-su/cham-cong/*
+       'api/nhan-su',
 
     ];
 
@@ -96,11 +100,19 @@ class Permission
 
     ];
 
-    public function handle(Request $request, Closure $next): Response
-    {
-        if ($this->shouldExcludeRoute($request->path())) {
-            return $next($request);
-        }
+public function handle(Request $request, Closure $next): Response
+{
+    // 🚫 BYPASS Permission V1 cho toàn bộ API Nhân sự:
+    // - Bất kỳ /api/nhan-su/* nào cũng không bị V1 chặn
+    // - Đã có PermissionV2 + logic controller lo phần còn lại
+    if ($request->is('api/nhan-su*')) {
+        return $next($request);
+    }
+
+    if ($this->shouldExcludeRoute($request->path())) {
+        return $next($request);
+    }
+
 
         $user = Auth::user();
 

@@ -3,166 +3,248 @@
 namespace App\Modules\NhanSu;
 
 use App\Http\Controllers\Controller as BaseController;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Validator;
 use App\Models\ChamCong;
 use App\Models\DiemLamViec;
-use App\Services\Timesheet\BangCongService;   // NEW
-use App\Services\Payroll\BangLuongService;    // NEW
-
+use App\Services\Face\FaceVerifyService;
+use App\Services\Payroll\BangLuongService;
+use App\Services\Timesheet\BangCongService;
 use Carbon\Carbon;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Validator;
 use Throwable;
 
 class ChamCongCheckoutController extends BaseController
 {
     /**
      * POST /nhan-su/cham-cong/checkout
-     * Body JSON: { lat: number, lng: number, accuracy_m?: number, device_id?: string }
-     * Header (khuyến nghị): X-Device-ID
+     *
+     * Mô hình mới:
+     * - KHÔNG còn check "đã checkout hôm nay chưa"
+     * - Chỉ checkout cho PHIÊN ĐANG MỞ gần nhất
+     * - Checkout phải đúng địa điểm của phiên đang mở
+     * - Nếu bấm lại sau khi checkout thành công trong ~2 phút -> trả success idempotent
      */
-    public function checkout(Request $request)
+    public function checkout(Request $request, FaceVerifyService $face)
     {
         $user = $request->user();
         $userId = $user?->id ?? auth()->id();
+
         if (!$userId) {
             return $this->respond(false, 'UNAUTHORIZED', null, 401);
         }
 
-        // ===== Validate input =====
-$v = Validator::make($request->all(), [
-    'lat'            => ['required', 'numeric', 'between:-90,90'],
-    'lng'            => ['required', 'numeric', 'between:-180,180'],
-    'accuracy_m'     => ['nullable', 'integer', 'min:0'],
-    'device_id'      => ['nullable', 'string', 'max:100'],
-    // ===== NEW flags (optional) =====
-    'also_timesheet' => ['nullable', 'boolean'],  // tổng hợp bảng công kỳ hiện tại (6→5)
-    'also_payroll'   => ['nullable', 'boolean'],  // sau khi tổng hợp công thì chạy luôn bảng lương
-]);
+        $v = Validator::make($request->all(), [
+            'lat'               => ['required', 'numeric', 'between:-90,90'],
+            'lng'               => ['required', 'numeric', 'between:-180,180'],
+            'accuracy_m'        => ['nullable', 'integer', 'min:0'],
+            'device_id'         => ['nullable', 'string', 'max:100'],
+
+            // Optional: FE có thể gửi workpoint_id, nhưng checkout sẽ khóa theo phiên đang mở
+            'workpoint_id'      => ['nullable', 'integer', 'min:1'],
+
+            // Ảnh selfie
+            'face_image'        => ['nullable', 'file', 'image', 'max:2048'],
+            'face_image_base64' => ['nullable', 'string'],
+
+            // Recompute flags
+            'also_timesheet'    => ['nullable', 'boolean'],
+            'also_payroll'      => ['nullable', 'boolean'],
+        ], [], [
+            'lat' => 'lat',
+            'lng' => 'lng',
+            'workpoint_id' => 'Địa điểm chấm công',
+        ]);
 
         if ($v->fails()) {
             return $this->respond(false, 'VALIDATION_ERROR', $v->errors(), 422);
         }
 
-        $lat      = (float) $request->input('lat');
-        $lng      = (float) $request->input('lng');
-        $accuracy = $request->input('accuracy_m'); // có thể null
-        $deviceId = $request->input('device_id') ?: $request->header('X-Device-ID') ?: 'WEB';
-        $clientIp = $request->ip();
+        $hasFile = $request->hasFile('face_image');
+        $hasB64  = $request->filled('face_image_base64');
 
-        // Dùng timezone app cho nhất quán
-        $now   = Carbon::now(config('app.timezone'));
-        $today = $now->toDateString();
-
-        // ===== Tìm geofence gần nhất và kiểm tra =====
-        $diem = DiemLamViec::nearest($lat, $lng);
-        if (!$diem) {
-            return $this->respond(false, 'NO_WORKPOINT', 'Chưa cấu hình điểm làm việc (geofence).', 503);
+        if (!$hasFile && !$hasB64) {
+            return $this->respond(false, 'VALIDATION_ERROR', [
+                'face_image' => ['Thiếu ảnh selfie ra. Vui lòng chụp bằng camera.'],
+            ], 422);
         }
 
-        [$within, $distanceM] = $diem->withinGeofence($lat, $lng);
-        if (!$within) {
-            return $this->respond(false, 'OUT_OF_GEOFENCE', [
-                'message'     => 'Chỉ cho phép chấm công tại công ty.',
-                'distance_m'  => (int) $distanceM,
-                'ban_kinh_m'  => (int) $diem->ban_kinh_m,
-                'workpointId' => (int) $diem->id,
+        $lat      = (float) $request->input('lat');
+        $lng      = (float) $request->input('lng');
+        $accuracy = $request->input('accuracy_m');
+        $deviceId = $request->input('device_id') ?: $request->header('X-Device-ID') ?: 'WEB';
+        $clientIp = $request->ip();
+        $workpointId = $request->filled('workpoint_id') ? (int) $request->input('workpoint_id') : null;
+
+        if (strtoupper((string) $deviceId) !== 'MOBILE') {
+            return $this->respond(false, 'DEVICE_NOT_ALLOWED', [
+                'message' => 'Chỉ cho phép chấm công từ ứng dụng di động.',
             ], 403);
         }
 
-        // (tùy chọn) Nếu accuracy quá lớn, có thể chặn
-        // if ($accuracy !== null && $accuracy > 100) {
-        //     return $this->respond(false, 'LOW_ACCURACY', 'Sai số định vị quá lớn.', 422, ['accuracy_m' => (int)$accuracy]);
-        // }
+        $now = Carbon::now(config('app.timezone'));
+        $alsoTimesheet = $request->boolean('also_timesheet', false);
+        $alsoPayroll   = $request->boolean('also_payroll', false);
 
-        // ===== Kiểm tra đã CHECK-IN hôm nay chưa =====
-        $checkin = ChamCong::query()
-            ->ofUser($userId)
-            ->checkin()
-            ->onDate($today)
-            ->latest('checked_at')
-            ->first();
+        // ===== 1) Tìm phiên đang mở =====
+        $openCheckin = $this->findOpenSession($userId);
 
-        if (!$checkin) {
-            return $this->respond(false, 'NO_CHECKIN_TODAY', 'Bạn chưa check-in hôm nay.', 409);
+        if (!$openCheckin) {
+            $recentCheckout = $this->findRecentCheckout($userId, $now);
+
+            if ($recentCheckout) {
+                return $this->respond(true, 'CHECKOUT_OK', [
+                    'log' => [
+                        'id'         => $recentCheckout->id,
+                        'desc'       => $recentCheckout->shortDesc(),
+                        'checked_at' => $recentCheckout->checked_at,
+                        'distance_m' => $recentCheckout->distance_m,
+                        'within'     => (bool) $recentCheckout->within_geofence,
+                        'face_score' => (int) ($recentCheckout->face_score ?? 0),
+                    ],
+                    'workpoint' => [
+                        'id'         => (int) ($recentCheckout->workpoint_id ?? 0),
+                        'ten'        => $recentCheckout->workpoint?->ten,
+                        'ban_kinh_m' => (int) ($recentCheckout->workpoint?->ban_kinh_m ?? 0),
+                    ],
+                    'session' => [
+                        'open'            => false,
+                        'existing'        => true,
+                        'checked_out_at'  => optional($recentCheckout->checked_at)->toDateTimeString(),
+                    ],
+                    'recomputed' => [
+                        'cycle'         => null,
+                        'timesheet'     => false,
+                        'payroll'       => false,
+                        'requested_ts'  => $alsoTimesheet,
+                        'requested_pr'  => $alsoPayroll,
+                    ],
+                ], 200);
+            }
+
+            return $this->respond(false, 'NO_OPEN_SESSION', [
+                'message' => 'Bạn không có phiên làm việc nào đang mở để chấm công ra.',
+            ], 409);
         }
 
-        // ===== Chặn CHECK-OUT trùng trong ngày =====
-        $exists = ChamCong::query()
-            ->ofUser($userId)
-            ->checkout()
-            ->onDate($today)
-            ->exists();
+        // ===== 2) Khóa checkout theo đúng workpoint của phiên đang mở =====
+        $targetWorkpoint = $this->resolveCheckoutWorkpoint($openCheckin, $workpointId, $lat, $lng);
 
-        if ($exists) {
-            return $this->respond(false, 'ALREADY_CHECKED_OUT', 'Bạn đã check-out hôm nay.', 409);
+        if (!$targetWorkpoint) {
+            return $this->respond(false, 'INVALID_WORKPOINT', [
+                'message' => 'Không xác định được địa điểm chấm công ra cho phiên đang mở.',
+            ], 422);
         }
 
-        // ===== Idempotency nhẹ: nếu có bản ghi checkout rất gần thời điểm hiện tại => coi như đã tạo =====
-        $recent = ChamCong::query()
-            ->ofUser($userId)
-            ->checkout()
-            ->where('checked_at', '>=', $now->copy()->subMinutes(2)) // 2 phút
-            ->latest('checked_at')
-            ->first();
-        if ($recent) {
-// ===== NEW: optionally recompute timesheet & payroll for current cycle (6→5)
-$didTs = false; $didPr = false; $cycle = null;
-if ($request->boolean('also_timesheet', false) || $request->boolean('also_payroll', false)) {
-    try {
-        // Xác định kỳ công (YYYY-MM) theo quy tắc 6→5 tại thời điểm checkout
-        $cycle = BangCongService::cycleLabelForDate($now);
-        if ($request->boolean('also_timesheet', false)) {
-            /** @var BangCongService $ts */
-            $ts = app(BangCongService::class);
-            $ts->computeMonth($cycle, (int)$userId);   // tôn trọng locked trong service
-            $didTs = true;
+        if ($workpointId && (int) $workpointId !== (int) $targetWorkpoint->id) {
+            return $this->respond(false, 'CHECKOUT_WORKPOINT_MISMATCH', [
+                'message' => 'Bạn phải chấm công ra đúng địa điểm của phiên đang mở.',
+                'open_session' => [
+                    'checkin_id'    => (int) $openCheckin->id,
+                    'checked_in_at' => optional($openCheckin->checked_at)->toDateTimeString(),
+                    'workpoint_id'  => (int) ($openCheckin->workpoint_id ?? 0),
+                    'workpoint_ten' => $openCheckin->workpoint?->ten,
+                    'short_desc'    => $openCheckin->shortDesc(),
+                ],
+                'selected_workpoint' => [
+                    'id'  => (int) $workpointId,
+                    'ten' => optional(DiemLamViec::query()->find($workpointId))->ten,
+                ],
+            ], 409);
         }
-        if ($request->boolean('also_payroll', false)) {
-            /** @var BangLuongService $payroll */
-            $payroll = app(BangLuongService::class);
-            $payroll->computeMonth($cycle, (int)$userId); // tôn trọng locked snapshot lương
-            $didPr = true;
-        }
-    } catch (Throwable $e) {
-        \Log::warning('Post-checkout recompute failed', [
-            'uid' => $userId, 'cycle' => $cycle, 'err' => $e->getMessage()
-        ]);
-    }
-}
 
-return $this->respond(true, 'CHECKOUT_OK', [
-    'log' => [
-        'id'         => $log->id,
-        'desc'       => $log->shortDesc(),
-        'checked_at' => $log->checked_at,
-        'distance_m' => $log->distance_m,
-        'within'     => (bool) $log->within_geofence,
-    ],
-    'workpoint' => [
-        'id'         => (int) $diem->id,
-        'ten'        => $diem->ten,
-        'ban_kinh_m' => (int) $diem->ban_kinh_m,
-    ],
-    // ===== NEW: meta thông báo FE biết có chạy tổng hợp không
-    'recomputed' => [
-        'cycle'         => $cycle,
-        'timesheet'     => $didTs,
-        'payroll'       => $didPr,
-        'requested_ts'  => (bool)$request->boolean('also_timesheet', false),
-        'requested_pr'  => (bool)$request->boolean('also_payroll', false),
-    ],
-], 201);
+        [$within, $distanceM] = $targetWorkpoint->withinGeofence($lat, $lng);
 
+        if (!$within) {
+            return $this->respond(false, 'OUT_OF_CHECKOUT_RANGE', [
+                'message' => 'Bạn phải chấm công ra trong bán kính hợp lệ của địa điểm đã chấm công vào.',
+                'distance_m' => (int) $distanceM,
+                'ban_kinh_m' => (int) $targetWorkpoint->ban_kinh_m,
+                'workpoint'  => [
+                    'id'  => (int) $targetWorkpoint->id,
+                    'ten' => $targetWorkpoint->ten,
+                ],
+                'open_session' => [
+                    'checkin_id'    => (int) $openCheckin->id,
+                    'checked_in_at' => optional($openCheckin->checked_at)->toDateTimeString(),
+                    'workpoint_id'  => (int) ($openCheckin->workpoint_id ?? 0),
+                    'workpoint_ten' => $openCheckin->workpoint?->ten ?? $targetWorkpoint->ten,
+                ],
+            ], 409);
         }
 
         try {
+            // ===== 3) Chuẩn hoá ảnh =====
+            $binary = null;
+
+            if ($hasFile) {
+                /** @var \Illuminate\Http\UploadedFile $file */
+                $file   = $request->file('face_image');
+                $binary = file_get_contents($file->getRealPath());
+            } else {
+                $b64 = (string) $request->input('face_image_base64');
+                if (str_contains($b64, ',')) {
+                    $b64 = explode(',', $b64, 2)[1];
+                }
+                $binary = base64_decode($b64, true);
+
+                if ($binary === false) {
+                    return $this->respond(false, 'INVALID_FACE_BASE64', [
+                        'message' => 'Ảnh selfie ra (base64) không hợp lệ.',
+                    ], 422);
+                }
+            }
+
+            $employeeKey = $user->ma_nv;
+            if (!$employeeKey) {
+                return $this->respond(false, 'MISSING_EMPLOYEE_CODE', [
+                    'message' => 'Tài khoản chưa được cấu hình Mã nhân viên (ma_nv). Vui lòng liên hệ quản trị.',
+                ], 422);
+            }
+
+            // ===== 4) Face verify (giữ strict như luồng checkout cũ) =====
+            $faceResult = $face->verify($employeeKey, $binary);
+            $faceOk     = (bool) ($faceResult['ok'] ?? false);
+            $faceScore  = (int) ($faceResult['score'] ?? 0);
+            $provider   = (string) ($faceResult['provider'] ?? 'aws-gateway');
+
+            if (!$faceOk) {
+                return $this->respond(false, 'FACE_NOT_MATCH', [
+                    'message' => 'Không khớp khuôn mặt (ra). Vui lòng chấm công ra lại.',
+                    'score'   => $faceScore,
+                ], 409);
+            }
+
+            // ===== 5) Ghi log checkout =====
             $log = null;
+
             DB::transaction(function () use (
-                &$log, $userId, $lat, $lng, $accuracy, $distanceM, $deviceId, $clientIp, $now
+                &$log,
+                $userId,
+                $targetWorkpoint,
+                $lat,
+                $lng,
+                $accuracy,
+                $distanceM,
+                $deviceId,
+                $clientIp,
+                $now,
+                $binary,
+                $faceScore,
+                $provider
             ) {
+                $disk = Storage::disk('public');
+                $dir  = 'attendance/' . $userId;
+                $disk->makeDirectory($dir);
+
+                $filename = $now->format('Ymd_His') . '_' . uniqid('face_out_', true) . '.jpg';
+                $path     = $dir . '/' . $filename;
+                $disk->put($path, $binary);
+
                 $log = ChamCong::create([
                     'user_id'         => $userId,
+                    'workpoint_id'    => $targetWorkpoint->id,
                     'type'            => 'checkout',
                     'lat'             => $lat,
                     'lng'             => $lng,
@@ -173,11 +255,48 @@ return $this->respond(true, 'CHECKOUT_OK', [
                     'ip'              => $clientIp,
                     'checked_at'      => $now,
                     'ghi_chu'         => null,
+
+                    'selfie_path'     => $path,
+                    'face_match'      => true,
+                    'face_score'      => $faceScore,
+                    'face_provider'   => $provider,
+                    'face_checked_at' => $now,
+                    'reason'          => null,
+                    'cancelled'       => false,
+                    'cancelled_at'    => null,
                 ]);
             });
 
-            // (tùy chọn) có thể tính nhanh thời gian làm việc = checkout - checkin gần nhất
-            // $workedMinutes = $checkin ? $checkin->checked_at->diffInMinutes($now) : null;
+            // ===== 6) Recompute optional =====
+            $didTs = false;
+            $didPr = false;
+            $cycle = null;
+
+            if ($alsoTimesheet || $alsoPayroll) {
+                try {
+                    $cycle = BangCongService::cycleLabelForDate($now);
+
+                    if ($alsoTimesheet) {
+                        /** @var BangCongService $ts */
+                        $ts = app(BangCongService::class);
+                        $ts->computeMonth($cycle, (int) $userId);
+                        $didTs = true;
+                    }
+
+                    if ($alsoPayroll) {
+                        /** @var BangLuongService $payroll */
+                        $payroll = app(BangLuongService::class);
+                        $payroll->computeMonth($cycle, (int) $userId);
+                        $didPr = true;
+                    }
+                } catch (Throwable $e) {
+                    \Log::warning('Post-checkout recompute failed', [
+                        'uid'   => $userId,
+                        'cycle' => $cycle,
+                        'err'   => $e->getMessage(),
+                    ]);
+                }
+            }
 
             return $this->respond(true, 'CHECKOUT_OK', [
                 'log' => [
@@ -186,35 +305,132 @@ return $this->respond(true, 'CHECKOUT_OK', [
                     'checked_at' => $log->checked_at,
                     'distance_m' => $log->distance_m,
                     'within'     => (bool) $log->within_geofence,
+                    'face_score' => $faceScore,
                 ],
                 'workpoint' => [
-                    'id'         => (int) $diem->id,
-                    'ten'        => $diem->ten,
-                    'ban_kinh_m' => (int) $diem->ban_kinh_m,
+                    'id'         => (int) $targetWorkpoint->id,
+                    'ten'        => $targetWorkpoint->ten,
+                    'ban_kinh_m' => (int) $targetWorkpoint->ban_kinh_m,
+                ],
+                'session' => [
+                    'open'            => false,
+                    'existing'        => false,
+                    'checked_out_at'  => optional($log->checked_at)->toDateTimeString(),
+                    'closed_checkin_id' => (int) $openCheckin->id,
+                ],
+                'recomputed' => [
+                    'cycle'         => $cycle,
+                    'timesheet'     => $didTs,
+                    'payroll'       => $didPr,
+                    'requested_ts'  => $alsoTimesheet,
+                    'requested_pr'  => $alsoPayroll,
                 ],
             ], 201);
         } catch (Throwable $e) {
-            return $this->respond(false, 'SERVER_ERROR', config('app.debug') ? $e->getMessage() : 'Lỗi hệ thống.', 500);
+            return $this->respond(false, 'SERVER_ERROR', [
+                'message' => config('app.debug') ? $e->getMessage() : 'Lỗi hệ thống.',
+            ], 500);
         }
     }
 
     /**
-     * Chuẩn hóa response (tương thích CustomResponse nếu có).
-     * $extra dùng để trả kèm meta khi cần.
+     * Tìm phiên đang mở:
+     * - latest valid checkin
+     * - không có valid checkout nào sau nó
+     */
+    private function findOpenSession(int $userId): ?ChamCong
+    {
+        /** @var ChamCong|null $lastCheckin */
+        $lastCheckin = ChamCong::query()
+            ->with(['workpoint:id,ten,ban_kinh_m,lat,lng'])
+            ->ofUser($userId)
+            ->valid()
+            ->checkin()
+            ->orderByDesc('checked_at')
+            ->orderByDesc('id')
+            ->first();
+
+        if (!$lastCheckin) {
+            return null;
+        }
+
+        $hasCheckoutAfter = ChamCong::query()
+            ->ofUser($userId)
+            ->valid()
+            ->checkout()
+            ->where('checked_at', '>', $lastCheckin->checked_at)
+            ->exists();
+
+        return $hasCheckoutAfter ? null : $lastCheckin;
+    }
+
+    /**
+     * Idempotent mềm: sau khi checkout thành công, bấm lại rất nhanh vẫn trả OK.
+     */
+    private function findRecentCheckout(int $userId, Carbon $now): ?ChamCong
+    {
+        return ChamCong::query()
+            ->with(['workpoint:id,ten,ban_kinh_m'])
+            ->ofUser($userId)
+            ->valid()
+            ->checkout()
+            ->where('checked_at', '>=', $now->copy()->subMinutes(2))
+            ->orderByDesc('checked_at')
+            ->orderByDesc('id')
+            ->first();
+    }
+
+    /**
+     * Checkout luôn dùng workpoint của phiên đang mở.
+     * - Nếu open session có workpoint_id => dùng nó
+     * - Nếu legacy session không có workpoint_id => fallback selected workpoint hoặc nearest
+     */
+    private function resolveCheckoutWorkpoint(ChamCong $openCheckin, ?int $selectedWorkpointId, float $lat, float $lng): ?DiemLamViec
+    {
+        if ($openCheckin->relationLoaded('workpoint') && $openCheckin->workpoint) {
+            return $openCheckin->workpoint;
+        }
+
+        if ($openCheckin->workpoint_id) {
+            return DiemLamViec::query()->find($openCheckin->workpoint_id);
+        }
+
+        if ($selectedWorkpointId) {
+            return DiemLamViec::query()->find($selectedWorkpointId);
+        }
+
+        return DiemLamViec::nearest($lat, $lng);
+    }
+
+    /**
+     * Chuẩn hoá response
      */
     private function respond(bool $success, string $code, $data = null, int $status = 200, array $extra = [])
     {
+        $payload = $data;
+
+        if (!empty($extra)) {
+            if (is_array($payload)) {
+                $payload = array_merge($payload, $extra);
+            } elseif (is_null($payload)) {
+                $payload = $extra;
+            } else {
+                $payload = array_merge(['message' => $payload], $extra);
+            }
+        }
+
         if (class_exists(\App\Class\CustomResponse::class)) {
             if ($success) {
-                return \App\Class\CustomResponse::success($data ?? $extra, $code)->setStatusCode($status);
+                return \App\Class\CustomResponse::success($payload, $code)->setStatusCode($status);
             }
-            return \App\Class\CustomResponse::failed($data ?? $extra, $code)->setStatusCode($status);
+
+            return \App\Class\CustomResponse::failed($payload, $code)->setStatusCode($status);
         }
 
         return response()->json([
             'success' => $success,
             'code'    => $code,
-            'data'    => $data ?? $extra,
+            'data'    => $payload,
         ], $status);
     }
 }

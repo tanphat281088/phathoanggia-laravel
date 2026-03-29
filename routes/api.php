@@ -32,6 +32,10 @@ use App\Modules\NhanSu\DonTuController;
 use App\Modules\NhanSu\BangCongController;
 use App\Modules\NhanSu\BangCongAdminOpsController;
 use App\Modules\NhanSu\HolidayController;
+
+use App\Modules\NhanSu\WorkpointController; // ✅ NEW: API địa điểm chấm công (event site)
+
+
 use App\Http\Controllers\Api\ExpenseCategoryController;
 use App\Http\Controllers\Api\BaoCaoQuanTriController;
 use App\Http\Controllers\SignMakerController;
@@ -60,6 +64,8 @@ use App\Modules\HopDong\HopDongController; // MỚI: Quản lý Hợp đồng
 use App\Http\Controllers\Reports\FinanceReportController; // NEW: Báo cáo Tài chính
 use App\Http\Controllers\Reports\CustomerReportController; // NEW: Báo cáo Khách hàng
 use App\Http\Controllers\Reports\PayrollExportController; // NEW: Export Bảng lương chi tiết
+
+use App\Http\Controllers\Reports\EventAttendanceReportController; // NEW: Báo cáo chấm công theo địa điểm (event)
 
 
 
@@ -617,6 +623,8 @@ Route::prefix('utilities')->group(function () {
       Route::get('/kqkd',        [BaoCaoQuanTriController::class, 'kqkd']);
       Route::get('/kqkd-detail', [BaoCaoQuanTriController::class, 'kqkdDetail']);  // nếu bạn đã thêm method detail
       Route::get('/kqkd-export', [BaoCaoQuanTriController::class, 'kqkdExport']);  // nếu bạn đã thêm export
+        // ✅ NEW: Báo cáo chấm công theo địa điểm/event
+      Route::get('/cham-cong-event', [EventAttendanceReportController::class, 'index']);
   });
 
 
@@ -864,15 +872,29 @@ Route::prefix('vt')->group(function () {
     Route::post('/import-excel', [\App\Modules\SanXuat\SanXuatController::class, 'importExcel']);
   });
 
-  // ===== Alias cho FE: /attendance/* → dùng chung controller Nhân Sự (KHÔNG thay thế route cũ)
-  Route::post('/attendance/checkin',  [ChamCongController::class,         'checkin']);
-  Route::post('/attendance/checkout', [ChamCongCheckoutController::class, 'checkout']);
-  Route::get ('/attendance/my',       [ChamCongMeController::class,       'index']);
-  Route::get ('/attendance/admin',    [ChamCongAdminController::class,    'index']);
+
+
 });
 
 // ...
 
+// ===== Alias cho FE: /attendance/* → dùng chung controller Nhân Sự (JWT only, KHÔNG check permission)
+Route::middleware(['jwt'])->group(function () {
+    // Nhân viên (Mobile)
+    Route::post('/attendance/checkin',  [ChamCongController::class, 'checkin']);
+    Route::post('/attendance/checkout', [ChamCongCheckoutController::class, 'checkout']);
+    Route::get ('/attendance/my',       [ChamCongMeController::class, 'index']);
+
+    // Admin alias (nếu có dùng)
+    Route::get ('/attendance/admin',    [ChamCongAdminController::class, 'index']);
+});
+
+// ===== Export Bảng lương chi tiết (CSV/HTML) — KHÔNG cần JWT =====
+Route::prefix('reports')->group(function () {
+    // GET /api/reports/payroll/export?user_id=&thang=&format=csv|html
+    Route::get('/payroll/export', [PayrollExportController::class, 'exportDetail'])
+        ->name('reports.payroll.export');
+});
 
 // ===== Export Bảng lương chi tiết (CSV/HTML) — KHÔNG cần JWT =====
 // ⚠️ Nếu sau này muốn bảo vệ kỹ hơn, có thể thêm middleware token riêng.
@@ -898,12 +920,37 @@ Route::middleware(['jwt', env('PERMISSION_ENGINE', 'permission') === 'v2' ? Perm
     ->name('nhan-su.')
     ->group(function () {
 
-        // ===== Chấm công =====
-        Route::post('cham-cong/checkin',  [ChamCongController::class,         'checkin'])->name('cham-cong.checkin');
-        Route::post('cham-cong/checkout', [ChamCongCheckoutController::class, 'checkout'])->name('cham-cong.checkout');
-        Route::get ('cham-cong/me',       [ChamCongMeController::class,       'index'])->name('cham-cong.me');
-        Route::get ('cham-cong',          [ChamCongAdminController::class,    'index'])->name('cham-cong.index');
+             // ===== Chấm công =====
+        // Nhân viên: checkin
+        Route::post('cham-cong/checkin',  [ChamCongController::class, 'checkin'])
+            ->withoutMiddleware([PermV1::class, PermV2::class])
+            ->name('cham-cong.checkin');
 
+        // Nhân viên: checkout
+        Route::post('cham-cong/checkout', [ChamCongCheckoutController::class, 'checkout'])
+            ->withoutMiddleware([PermV1::class, PermV2::class])
+            ->name('cham-cong.checkout');
+
+        // Nhân viên: xem chấm công của chính mình
+        Route::get('cham-cong/me', [ChamCongMeController::class, 'index'])
+            ->withoutMiddleware([PermV1::class, PermV2::class])
+            ->name('cham-cong.me');
+
+        // Quản lý: vẫn đi qua PermissionV2/V1 như cũ
+        Route::get('cham-cong', [ChamCongAdminController::class, 'index'])
+            ->name('cham-cong.index');
+
+
+         // ✅ NEW: Địa điểm chấm công (workpoints) – xem & tạo điểm event
+        Route::prefix('workpoints')->group(function () {
+            // Xem danh sách tối đa 200 điểm (fixed + event)
+            Route::get('/',  [WorkpointController::class, 'index'])
+                ->name('workpoints.index');
+
+            // Tạo địa điểm mới (event site) từ vị trí hiện tại
+            Route::post('/', [WorkpointController::class, 'store'])
+                ->name('workpoints.store');
+        });
         // ===== Đơn từ (xin nghỉ phép) =====
         Route::prefix('don-tu')->group(function () {
             Route::post('/',              [DonTuController::class, 'store'])->name('don-tu.store');

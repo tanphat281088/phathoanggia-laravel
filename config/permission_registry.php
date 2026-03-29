@@ -181,7 +181,7 @@ return [
 
 // ===== QUẢN LÝ CÔNG NỢ =====
 ['name' => 'quan-ly-cong-no', 'actions' => [
-    'showMenu' => true,  // hiện mục trên Sidebar
+    'showMenu' => false,  // hiện mục trên Sidebar
     'index'    => true,  // GET /cong-no/summary
     'show'     => true,  // GET /cong-no/customers/{id}
     'export'   => true,  // GET /cong-no/export
@@ -194,7 +194,7 @@ return [
 // ===== QUẢN LÝ CHI PHÍ (cha) =====
 ['name' => 'quan-ly-chi-phi', 'actions' => [
     // showMenu: bật true nếu anh muốn hiện 1 group "Quản lý chi phí" trên Sidebar
-    'showMenu' => true,
+    'showMenu' => false,
     'index'    => false,
     'show'     => false,
     'create'   => false,
@@ -227,7 +227,7 @@ return [
 
 // ===== QUẢN LÝ HỢP ĐỒNG =====
 ['name' => 'quan-ly-hop-dong', 'actions' => [
-    'showMenu' => true,   // để hiện group "Quản lý HĐ + TL" / "Quản lý Hợp đồng" trên Sidebar
+    'showMenu' => false,   // để hiện group "Quản lý HĐ + TL" / "Quản lý Hợp đồng" trên Sidebar
     'index'    => false,  // GET /quan-ly-hop-dong
     'show'     => false,  // GET /quan-ly-hop-dong/{id}
     'create'   => false,  // POST /quan-ly-hop-dong (sau này nếu có)

@@ -51,26 +51,29 @@ $order  = strtolower((string)$request->input('order', 'desc')) === 'asc' ? 'asc'
 
 
     try {
-      $query = ChamCong::query()
-    ->ofUser($userId)
-    ->between($from . ' 00:00:00', $to . ' 23:59:59');
+        $query = ChamCong::query()
+            ->ofUser($userId)
+            ->between($from . ' 00:00:00', $to . ' 23:59:59')
+            // NEW: load luôn tên địa điểm để FE hiển thị "vào/ra ở đâu"
+            ->with(['workpoint:id,ten']);
 
 // ====== DÁN 3 FILTER NÀY NGAY DƯỚI DÒNG TRÊN ======
-if ($type) {
-    // gọi scope ->checkin() hoặc ->checkout()
-    $query->{$type}();
-}
-if ($within !== null) {
-    $query->where('within_geofence', (bool)$within);
-}
+        if ($type) {
+            // gọi scope ->checkin() hoặc ->checkout()
+            $query->{$type}();
+        }
+        if ($within !== null) {
+            $query->where('within_geofence', (bool) $within);
+        }
 // ================================================
 
 // THAY orderByDesc('checked_at') bằng block dưới:
-if ($order === 'asc') {
-    $query->orderBy('checked_at', 'asc');
-} else {
-    $query->orderBy('checked_at', 'desc');
-}
+        if ($order === 'asc') {
+            $query->orderBy('checked_at', 'asc');
+        } else {
+            $query->orderBy('checked_at', 'desc');
+        }
+
 
 
         // (Tuỳ nhu cầu) Nếu muốn show tên user ở client thì eager-load users,
@@ -80,26 +83,39 @@ if ($order === 'asc') {
         $paginator = $query->paginate($perPage, ['*'], 'page', $page);
 
         $items = collect($paginator->items())->map(function (ChamCong $c) {
-            return [
-                'id'         => $c->id,
-                'type'       => $c->type, // checkin|checkout
-                'checked_at' => optional($c->checked_at)->toIso8601String(),
-                'lat'        => $c->lat,
-                'lng'        => $c->lng,
-                'distance_m' => $c->distance_m,
-                'within'     => (bool) $c->within_geofence,
-                'accuracy_m' => $c->accuracy_m,
-                'device_id'  => $c->device_id,
-                'ip'         => $c->ip,
-                'ghi_chu'    => $c->ghi_chu,
-                'short_desc' => $c->shortDesc(),
-                'ngay'       => $c->checked_at ? $c->checked_at->toDateString() : null,
-                'gio_phut'   => $c->checked_at ? $c->checked_at->format('H:i') : null,
-                'weekday'    => $c->checked_at ? $c->checked_at->locale('vi')->isoFormat('ddd') : null, // T2..CN
-'source'     => $c->device_id ? 'device' : ($c->ip ? 'ip' : null),
+            // NEW: lấy thông tin địa điểm nếu đã load quan hệ workpoint
+            $workpointName = null;
+            $workpointId   = null;
 
+            if ($c->relationLoaded('workpoint') && $c->workpoint) {
+                $workpointId   = $c->workpoint->id ?? null;
+                $workpointName = $c->workpoint->ten ?? null;
+            }
+
+            return [
+                'id'            => $c->id,
+                'type'          => $c->type, // checkin|checkout
+                'checked_at'    => optional($c->checked_at)->toIso8601String(),
+                'lat'           => $c->lat,
+                'lng'           => $c->lng,
+                'distance_m'    => $c->distance_m,
+                'within'        => (bool) $c->within_geofence,
+                'accuracy_m'    => $c->accuracy_m,
+                'device_id'     => $c->device_id,
+                'ip'            => $c->ip,
+                'ghi_chu'       => $c->ghi_chu,
+                'short_desc'    => $c->shortDesc(),
+                'ngay'          => $c->checked_at ? $c->checked_at->toDateString() : null,
+                'gio_phut'      => $c->checked_at ? $c->checked_at->format('H:i') : null,
+                'weekday'       => $c->checked_at ? $c->checked_at->locale('vi')->isoFormat('ddd') : null, // T2..CN
+                'source'        => $c->device_id ? 'device' : ($c->ip ? 'ip' : null),
+
+                // NEW: địa điểm chấm công (để FE hiển thị "vào/ra ở đâu")
+                'workpoint_id'  => $workpointId,
+                'workpoint_ten' => $workpointName,
             ];
         });
+
 
         return $this->respond(true, 'MY_ATTENDANCE', [
             // ✅ Chuẩn hóa về "filter" để FE dùng chung

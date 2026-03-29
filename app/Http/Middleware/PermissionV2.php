@@ -16,6 +16,8 @@ class PermissionV2
         'attendance'           => 'nhan-su', // alias cũ (nếu còn dùng)
         'nhan-su'              => 'nhan-su',
 
+        // ✅ NEW: Nhân sự → Địa điểm chấm công (workpoints)
+    'nhan-su/workpoints'   => 'nhan-su',
                 // Nhân sự → Bảng lương
         'nhan-su/bang-luong/my' => 'payrollMe', // Bảng lương (của tôi)
         'nhan-su/bang-luong'    => 'payroll',   // Bảng lương (Quản lý) + list
@@ -135,7 +137,16 @@ class PermissionV2
         // Các endpoint tra cứu/khởi tạo cần mở (nếu chúng đi trong group có permission)
         'danh-sach-phan-quyen',
         'vt/references',
-        'expense-categories',         // bao phủ .../parents, .../options, .../tree
+        'expense-categories',   
+        
+         // ✅ NHÂN SỰ: các endpoint "của tôi" luôn cho phép sau khi login
+    'nhan-su/cham-cong/me',
+    'nhan-su/bang-cong/my',
+    'nhan-su/don-tu/my',// bao phủ .../parents, .../options, .../tree
+
+      // ✅ ALIAS MOBILE: /api/attendance/* → bỏ check PermissionV2
+    // vì isPublic() so sánh phần path sau api/, chỉ cần 'attendance'
+    'attendance',
     ];
 
     // === umbrella helper: kiểm quyền 1 module + action ===

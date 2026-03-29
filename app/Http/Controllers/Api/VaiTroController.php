@@ -28,12 +28,15 @@ class VaiTroController extends Controller
   /**
    * Lấy permission registry: ưu tiên V2 khi PERMISSION_ENGINE=v2
    */
+  /**
+   * Lấy permission registry: FIX — luôn dùng V2 (permission_registry.php)
+   */
   private function getPermissionRegistry(): array
   {
-    $engine = env('PERMISSION_ENGINE', 'permission'); // 'permission' (v1) | 'v2'
-    $items  = $engine === 'v2' ? config('permission_registry') : config('permission');
+    $items = config('permission_registry'); // bỏ hẳn engine v1
     return is_array($items) ? $items : [];
   }
+
 
   /**
    * Validate phan_quyen (JSON mảng [{name,actions:{...}},...]) theo registry.
@@ -105,9 +108,19 @@ class VaiTroController extends Controller
 
     $out = [];
     foreach ($decoded as $entry) {
-      $name    = isset($entry['name']) ? (string)$entry['name'] : '';
+      $name    = isset($entry['name']) ? trim((string)$entry['name']) : '';
       $actions = (isset($entry['actions']) && is_array($entry['actions'])) ? $entry['actions'] : [];
-      if ($name === '') continue;
+      if ($name === '') {
+        continue;
+      }
+
+      // ✅ FIX LEGACY: cskh-points dùng 'send' → đổi sang 'sendZns'
+      if ($name === 'cskh-points' && array_key_exists('send', $actions)) {
+        if (!array_key_exists('sendZns', $actions)) {
+          $actions['sendZns'] = (bool)$actions['send'];
+        }
+        unset($actions['send']); // bỏ hẳn key cũ
+      }
 
       $normActions = [];
       foreach ($actions as $k => $v) {
@@ -116,7 +129,6 @@ class VaiTroController extends Controller
       }
 
       // ✳️ BỎ các module không tick gì (tất cả action = false)
-      //    (NHƯNG vẫn giữ nếu chỉ có 1 action như 'convert' = true)
       if (!in_array(true, array_values($normActions), true)) {
         continue;
       }
@@ -126,6 +138,7 @@ class VaiTroController extends Controller
 
     return json_encode($out, JSON_UNESCAPED_UNICODE);
   }
+
 
 
 
