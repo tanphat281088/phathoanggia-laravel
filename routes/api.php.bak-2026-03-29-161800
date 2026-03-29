@@ -34,7 +34,6 @@ use App\Modules\NhanSu\BangCongAdminOpsController;
 use App\Modules\NhanSu\HolidayController;
 
 use App\Modules\NhanSu\WorkpointController; // ✅ NEW: API địa điểm chấm công (event site)
-use App\Modules\NhanSu\WorkpointAdminController;
 
 
 use App\Http\Controllers\Api\ExpenseCategoryController;
@@ -954,26 +953,6 @@ Route::prefix('workpoints')->group(function () {
     Route::post('/', [WorkpointController::class, 'store'])
         ->withoutMiddleware([PermV1::class, PermV2::class])
         ->name('workpoints.store');
-});
-
-Route::prefix('workpoints-admin')->group(function () {
-    Route::get('/', [WorkpointAdminController::class, 'index'])
-        ->withoutMiddleware([PermV1::class, PermV2::class])
-        ->name('workpoints.admin.index');
-
-    Route::post('/', [WorkpointAdminController::class, 'store'])
-        ->withoutMiddleware([PermV1::class, PermV2::class])
-        ->name('workpoints.admin.store');
-
-    Route::put('/{id}', [WorkpointAdminController::class, 'update'])
-        ->whereNumber('id')
-        ->withoutMiddleware([PermV1::class, PermV2::class])
-        ->name('workpoints.admin.update');
-
-    Route::delete('/{id}', [WorkpointAdminController::class, 'destroy'])
-        ->whereNumber('id')
-        ->withoutMiddleware([PermV1::class, PermV2::class])
-        ->name('workpoints.admin.destroy');
 });
         // ===== Đơn từ (xin nghỉ phép) =====
         Route::prefix('don-tu')->group(function () {

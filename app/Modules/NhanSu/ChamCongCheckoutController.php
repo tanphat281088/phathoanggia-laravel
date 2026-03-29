@@ -35,6 +35,12 @@ class ChamCongCheckoutController extends BaseController
             return $this->respond(false, 'UNAUTHORIZED', null, 401);
         }
 
+        if (!$this->isMobileRequest($request)) {
+            return $this->respond(false, 'DEVICE_NOT_ALLOWED', [
+                'message' => 'Chỉ cho phép chấm công trên điện thoại.',
+            ], 403);
+        }
+
         $v = Validator::make($request->all(), [
             'lat'               => ['required', 'numeric', 'between:-90,90'],
             'lng'               => ['required', 'numeric', 'between:-180,180'],
@@ -194,6 +200,13 @@ class ChamCongCheckoutController extends BaseController
                         'message' => 'Ảnh selfie ra (base64) không hợp lệ.',
                     ], 422);
                 }
+            }
+
+            $binary = $this->normalizeImageBinary($binary);
+            if ($binary === null) {
+                return $this->respond(false, 'INVALID_FACE_IMAGE', [
+                    'message' => 'Ảnh selfie không hợp lệ hoặc bị hỏng. Vui lòng chụp lại.'
+                ], 422);
             }
 
             $employeeKey = $user->ma_nv;
@@ -400,6 +413,52 @@ class ChamCongCheckoutController extends BaseController
         }
 
         return DiemLamViec::nearest($lat, $lng);
+    }
+
+
+    /**
+     * Chuẩn hoá ảnh selfie về JPEG chuẩn để browser hiển thị ổn định.
+     * - Nếu ảnh rõ ràng không hợp lệ => null
+     * - Nếu GD không mở được nhưng ảnh có vẻ hợp lệ => giữ binary gốc
+     * - Nếu GD mở được => re-encode về JPEG quality 90
+     */
+    private function normalizeImageBinary(string $binary): ?string
+    {
+        $info = @getimagesizefromstring($binary);
+        if (!$info) {
+            return null;
+        }
+
+        if (!function_exists('imagecreatefromstring')) {
+            return $binary;
+        }
+
+        $im = @imagecreatefromstring($binary);
+        if (!$im) {
+            return $binary;
+        }
+
+        ob_start();
+        imagejpeg($im, null, 90);
+        $jpg = ob_get_clean();
+        imagedestroy($im);
+
+        return ($jpg !== false && strlen($jpg) > 0) ? $jpg : $binary;
+    }
+
+    private function isMobileRequest(Request $request): bool
+    {
+        $ua = strtolower((string) $request->userAgent());
+
+        if ($ua === '') {
+            return false;
+        }
+
+        return str_contains($ua, 'android')
+            || str_contains($ua, 'iphone')
+            || str_contains($ua, 'ipad')
+            || str_contains($ua, 'ipod')
+            || str_contains($ua, 'mobile');
     }
 
     /**

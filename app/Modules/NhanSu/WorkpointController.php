@@ -34,6 +34,12 @@ class WorkpointController extends BaseController
             return $this->failed([], 'UNAUTHORIZED', 401);
         }
 
+        if (!$this->isMobileRequest($request)) {
+            return $this->failed([
+                'message' => 'Chỉ cho phép tạo địa điểm chấm công trên điện thoại.'
+            ], 'DEVICE_NOT_ALLOWED', 403);
+        }
+
         // Normalize boolean query params từ FE (?only_available=true/false)
         if ($request->has('only_available')) {
             $raw = $request->input('only_available');
@@ -224,6 +230,21 @@ class WorkpointController extends BaseController
     }
 
     // ===== Helpers =====
+
+    private function isMobileRequest(Request $request): bool
+    {
+        $ua = strtolower((string) $request->userAgent());
+
+        if ($ua === '') {
+            return false;
+        }
+
+        return str_contains($ua, 'android')
+            || str_contains($ua, 'iphone')
+            || str_contains($ua, 'ipad')
+            || str_contains($ua, 'ipod')
+            || str_contains($ua, 'mobile');
+    }
 
     private function toItem(DiemLamViec $wp, ?int $distanceM = null): array
     {
