@@ -942,15 +942,15 @@ Route::middleware(['jwt', env('PERMISSION_ENGINE', 'permission') === 'v2' ? Perm
 
 
          // ✅ NEW: Địa điểm chấm công (workpoints) – xem & tạo điểm event
-        Route::prefix('workpoints')->group(function () {
-            // Xem danh sách tối đa 200 điểm (fixed + event)
-            Route::get('/',  [WorkpointController::class, 'index'])
-                ->name('workpoints.index');
+Route::prefix('workpoints')->group(function () {
+    Route::get('/',  [WorkpointController::class, 'index'])
+        ->withoutMiddleware([PermV1::class, PermV2::class])
+        ->name('workpoints.index');
 
-            // Tạo địa điểm mới (event site) từ vị trí hiện tại
-            Route::post('/', [WorkpointController::class, 'store'])
-                ->name('workpoints.store');
-        });
+    Route::post('/', [WorkpointController::class, 'store'])
+        ->withoutMiddleware([PermV1::class, PermV2::class])
+        ->name('workpoints.store');
+});
         // ===== Đơn từ (xin nghỉ phép) =====
         Route::prefix('don-tu')->group(function () {
             Route::post('/',              [DonTuController::class, 'store'])->name('don-tu.store');

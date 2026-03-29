@@ -34,17 +34,6 @@ class WorkpointController extends BaseController
             return $this->failed([], 'UNAUTHORIZED', 401);
         }
 
-        // Normalize boolean query params từ FE (?only_available=true/false)
-        if ($request->has('only_available')) {
-            $raw = $request->input('only_available');
-
-            if ($raw === 'true') {
-                $request->merge(['only_available' => 1]);
-            } elseif ($raw === 'false') {
-                $request->merge(['only_available' => 0]);
-            }
-        }
-
         $v = Validator::make($request->all(), [
             'lat'            => ['nullable', 'numeric', 'between:-90,90'],
             'lng'            => ['nullable', 'numeric', 'between:-180,180'],
