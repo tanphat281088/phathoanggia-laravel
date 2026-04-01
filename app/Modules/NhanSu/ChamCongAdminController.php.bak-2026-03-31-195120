@@ -38,15 +38,9 @@ class ChamCongAdminController extends BaseController
 
                 $workpointName = null;
                 $workpointId   = null;
-                $workpointDiaChi = null;
-                $workpointLat = null;
-                $workpointLng = null;
                 if ($c->relationLoaded('workpoint') && $c->workpoint) {
                     $workpointId   = $c->workpoint->id ?? null;
                     $workpointName = $c->workpoint->ten ?? null;
-                    $workpointDiaChi = $c->workpoint->dia_chi ?? null;
-                    $workpointLat = $c->workpoint->lat ?? null;
-                    $workpointLng = $c->workpoint->lng ?? null;
                 }
 
                 return [
@@ -67,12 +61,8 @@ class ChamCongAdminController extends BaseController
                     'ngay'          => $c->checked_at ? $c->checked_at->toDateString() : null,
                     'gio_phut'      => $c->checked_at ? $c->checked_at->format('H:i') : null,
                     'weekday'       => $c->checked_at ? $c->checked_at->locale('vi')->isoFormat('ddd') : null,
-                    'workpoint_id'       => $workpointId,
-                    'workpoint_ten'      => $workpointName,
-                    'workpoint_dia_chi'  => $workpointDiaChi,
-                    'workpoint_lat'      => $workpointLat,
-                    'workpoint_lng'      => $workpointLng,
-                    'selfie_url'         => $this->makeSelfieDataUrl($c->selfie_path),
+                    'workpoint_id'  => $workpointId,
+                    'workpoint_ten' => $workpointName,
                 ];
             });
 
@@ -221,7 +211,7 @@ class ChamCongAdminController extends BaseController
             ->between($filters['from'] . ' 00:00:00', $filters['to'] . ' 23:59:59')
             ->with([
                 'user:id,name,email',
-                'workpoint:id,ten,dia_chi,lat,lng',
+                'workpoint:id,ten',
             ]);
 
         if ($filters['user_id']) {
@@ -243,29 +233,6 @@ class ChamCongAdminController extends BaseController
         }
 
         return $query;
-    }
-
-
-    private function makeSelfieDataUrl(?string $selfiePath): ?string
-    {
-        if (!$selfiePath) {
-            return null;
-        }
-
-        $full = storage_path('app/public/' . ltrim($selfiePath, '/'));
-
-        if (!is_file($full) || !is_readable($full)) {
-            return null;
-        }
-
-        $bin = @file_get_contents($full);
-        if ($bin === false || $bin === '') {
-            return null;
-        }
-
-        $mime = @mime_content_type($full) ?: 'image/jpeg';
-
-        return 'data:' . $mime . ';base64,' . base64_encode($bin);
     }
 
     private function respond(bool $success, string $code, $data = null, int $status = 200)
