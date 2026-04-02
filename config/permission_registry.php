@@ -276,7 +276,28 @@ return [
 ]],
 
 
-  // ===== NHÂN SỰ =====
+  // ===== NHÂN SỰ → THÔNG BÁO CÔNG TY =====
+['name' => 'thong-bao-cong-ty', 'actions' => [
+    'showMenu' => false,
+    'index'    => false,
+    'show'     => false,
+    'create'   => false,
+    'edit'     => false,
+    'delete'   => false,
+    'export'   => false,
+]],
+
+['name' => 'thong-bao-cong-ty-admin', 'actions' => [
+    'showMenu' => false,
+    'index'    => false,
+    'show'     => false,
+    'create'   => false,
+    'edit'     => false,
+    'delete'   => false,
+    'export'   => false,
+]],
+
+// ===== NHÂN SỰ =====
 ['name' => 'nhan-su', 'actions' => [
   'showMenu' => false,
   'index'    => false,

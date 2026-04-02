@@ -35,6 +35,7 @@ use App\Modules\NhanSu\HolidayController;
 
 use App\Modules\NhanSu\WorkpointController; // ✅ NEW: API địa điểm chấm công (event site)
 use App\Modules\NhanSu\WorkpointAdminController;
+use App\Modules\NhanSu\ThongBaoCongTyController; // NEW: Thông báo công ty
 
 
 use App\Http\Controllers\Api\ExpenseCategoryController;
@@ -1040,6 +1041,26 @@ Route::prefix('workpoints-admin')->group(function () {
                 ->name('bang-luong.update');
         });
 
+
+        // ===== Thông báo công ty =====
+        Route::prefix('thong-bao')->group(function () {
+            Route::get('/', [ThongBaoCongTyController::class, 'index'])->name('thong-bao.index');
+            Route::get('/{id}', [ThongBaoCongTyController::class, 'show'])->whereNumber('id')->name('thong-bao.show');
+        });
+        Route::get('thong-bao-file/{id}', [ThongBaoCongTyController::class, 'download'])
+            ->whereNumber('id')
+            ->name('thong-bao.file');
+
+        Route::prefix('thong-bao-admin')->group(function () {
+            Route::get('/', [ThongBaoCongTyController::class, 'adminIndex'])->name('thong-bao.admin.index');
+            Route::post('/', [ThongBaoCongTyController::class, 'store'])->name('thong-bao.admin.store');
+            Route::get('/{id}', [ThongBaoCongTyController::class, 'adminShow'])->whereNumber('id')->name('thong-bao.admin.show');
+            Route::patch('/{id}', [ThongBaoCongTyController::class, 'update'])->whereNumber('id')->name('thong-bao.admin.update');
+            Route::delete('/{id}', [ThongBaoCongTyController::class, 'destroy'])->whereNumber('id')->name('thong-bao.admin.destroy');
+        });
+        Route::get('thong-bao-admin-file/{id}', [ThongBaoCongTyController::class, 'adminDownload'])
+            ->whereNumber('id')
+            ->name('thong-bao.admin.file');
 
         // ===== Ngày lễ (Holiday) =====
         Route::prefix('holiday')->group(function () {

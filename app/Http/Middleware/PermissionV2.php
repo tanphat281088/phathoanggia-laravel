@@ -15,6 +15,10 @@ class PermissionV2
         // Hệ thống phụ
         'attendance'           => 'nhan-su', // alias cũ (nếu còn dùng)
         'nhan-su'              => 'nhan-su',
+        'nhan-su/thong-bao'        => 'thong-bao-cong-ty',
+        'nhan-su/thong-bao-file'   => 'thong-bao-cong-ty',
+        'nhan-su/thong-bao-admin'  => 'thong-bao-cong-ty-admin',
+        'nhan-su/thong-bao-admin-file' => 'thong-bao-cong-ty-admin',
 
         // ✅ NEW: Nhân sự → Địa điểm chấm công (workpoints)
     'nhan-su/workpoints'   => 'nhan-su',

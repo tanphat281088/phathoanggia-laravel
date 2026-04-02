@@ -17,6 +17,7 @@ use Throwable;
 
 class ChamCongCheckoutController extends BaseController
 {
+    private const COMPANY_OFFICE_CODE = 'DD001';
     /**
      * POST /nhan-su/cham-cong/checkout
      *
@@ -134,48 +135,84 @@ class ChamCongCheckoutController extends BaseController
             ], 409);
         }
 
-        // ===== 2) Khóa checkout theo đúng workpoint của phiên đang mở =====
+        // ===== 2) Checkout theo đúng workpoint của phiên đang mở,
+        // nhưng cho phép ngoại lệ checkout tại [DD001] Văn phòng PHG =====
         $targetWorkpoint = $this->resolveCheckoutWorkpoint($openCheckin, $workpointId, $lat, $lng);
+        $companyOffice   = $this->resolveCompanyOfficeWorkpoint($now);
 
-        if (!$targetWorkpoint) {
+        if (!$targetWorkpoint && !$companyOffice) {
             return $this->respond(false, 'INVALID_WORKPOINT', [
                 'message' => 'Không xác định được địa điểm chấm công ra cho phiên đang mở.',
             ], 422);
         }
 
-        if ($workpointId && (int) $workpointId !== (int) $targetWorkpoint->id) {
-            return $this->respond(false, 'CHECKOUT_WORKPOINT_MISMATCH', [
-                'message' => 'Bạn phải chấm công ra đúng địa điểm của phiên đang mở.',
-                'open_session' => [
-                    'checkin_id'    => (int) $openCheckin->id,
-                    'checked_in_at' => optional($openCheckin->checked_at)->toDateTimeString(),
-                    'workpoint_id'  => (int) ($openCheckin->workpoint_id ?? 0),
-                    'workpoint_ten' => $openCheckin->workpoint?->ten,
-                    'short_desc'    => $openCheckin->shortDesc(),
-                ],
-                'selected_workpoint' => [
-                    'id'  => (int) $workpointId,
-                    'ten' => optional(DiemLamViec::query()->find($workpointId))->ten,
-                ],
-            ], 409);
+        if ($workpointId && $targetWorkpoint && (int) $workpointId !== (int) $targetWorkpoint->id) {
+            $selectedPoint = DiemLamViec::query()->find($workpointId);
+            $selectedIsCompanyOffice = $this->isCompanyOffice($selectedPoint);
+
+            if (!$selectedIsCompanyOffice) {
+                return $this->respond(false, 'CHECKOUT_WORKPOINT_MISMATCH', [
+                    'message' => 'Bạn phải chấm công ra đúng địa điểm của phiên đang mở, hoặc tại [DD001] Văn phòng PHG.',
+                    'open_session' => [
+                        'checkin_id'    => (int) $openCheckin->id,
+                        'checked_in_at' => optional($openCheckin->checked_at)->toDateTimeString(),
+                        'workpoint_id'  => (int) ($openCheckin->workpoint_id ?? 0),
+                        'workpoint_ten' => $openCheckin->workpoint?->ten,
+                        'short_desc'    => $openCheckin->shortDesc(),
+                    ],
+                    'selected_workpoint' => [
+                        'id'  => (int) $workpointId,
+                        'ten' => optional($selectedPoint)->ten,
+                    ],
+                ], 409);
+            }
         }
 
-        [$within, $distanceM] = $targetWorkpoint->withinGeofence($lat, $lng);
+        $finalWorkpoint = $targetWorkpoint;
+        $isCompanyOfficeOverride = false;
 
-        if (!$within) {
+        $within = false;
+        $distanceM = null;
+
+        if ($targetWorkpoint) {
+            [$within, $distanceM] = $targetWorkpoint->withinGeofence($lat, $lng);
+        }
+
+        $officeWithin = false;
+        $officeDistanceM = null;
+
+        if ($this->isCompanyOffice($companyOffice)) {
+            [$officeWithin, $officeDistanceM] = $companyOffice->withinGeofence($lat, $lng);
+        }
+
+        if (!$within && $officeWithin) {
+            $finalWorkpoint = $companyOffice;
+            $distanceM = $officeDistanceM;
+            $within = true;
+            $isCompanyOfficeOverride = true;
+        }
+
+        if (!$within || !$finalWorkpoint) {
             return $this->respond(false, 'OUT_OF_CHECKOUT_RANGE', [
-                'message' => 'Bạn phải chấm công ra trong bán kính hợp lệ của địa điểm đã chấm công vào.',
-                'distance_m' => (int) $distanceM,
-                'ban_kinh_m' => (int) $targetWorkpoint->ban_kinh_m,
+                'message' => 'Bạn phải chấm công ra trong bán kính hợp lệ của địa điểm đã chấm công vào, hoặc tại [DD001] Văn phòng PHG.',
+                'distance_m' => (int) ($distanceM ?? 0),
+                'ban_kinh_m' => (int) ($targetWorkpoint?->ban_kinh_m ?? 0),
                 'workpoint'  => [
-                    'id'  => (int) $targetWorkpoint->id,
-                    'ten' => $targetWorkpoint->ten,
+                    'id'  => (int) ($targetWorkpoint?->id ?? 0),
+                    'ten' => $targetWorkpoint?->ten,
                 ],
+                'company_office' => $companyOffice ? [
+                    'id'         => (int) $companyOffice->id,
+                    'ma_dia_diem'=> $companyOffice->ma_dia_diem,
+                    'ten'        => $companyOffice->ten,
+                    'ban_kinh_m' => (int) $companyOffice->ban_kinh_m,
+                    'distance_m' => is_null($officeDistanceM) ? null : (int) $officeDistanceM,
+                ] : null,
                 'open_session' => [
                     'checkin_id'    => (int) $openCheckin->id,
                     'checked_in_at' => optional($openCheckin->checked_at)->toDateTimeString(),
                     'workpoint_id'  => (int) ($openCheckin->workpoint_id ?? 0),
-                    'workpoint_ten' => $openCheckin->workpoint?->ten ?? $targetWorkpoint->ten,
+                    'workpoint_ten' => $openCheckin->workpoint?->ten ?? $targetWorkpoint?->ten,
                 ],
             ], 409);
         }
@@ -235,7 +272,7 @@ class ChamCongCheckoutController extends BaseController
             DB::transaction(function () use (
                 &$log,
                 $userId,
-                $targetWorkpoint,
+                $finalWorkpoint,
                 $lat,
                 $lng,
                 $accuracy,
@@ -245,7 +282,8 @@ class ChamCongCheckoutController extends BaseController
                 $now,
                 $binary,
                 $faceScore,
-                $provider
+                $provider,
+                $isCompanyOfficeOverride
             ) {
                 $disk = Storage::disk('public');
                 $dir  = 'attendance/' . $userId;
@@ -257,7 +295,7 @@ class ChamCongCheckoutController extends BaseController
 
                 $log = ChamCong::create([
                     'user_id'         => $userId,
-                    'workpoint_id'    => $targetWorkpoint->id,
+                    'workpoint_id'    => $finalWorkpoint->id,
                     'type'            => 'checkout',
                     'lat'             => $lat,
                     'lng'             => $lng,
@@ -274,7 +312,7 @@ class ChamCongCheckoutController extends BaseController
                     'face_score'      => $faceScore,
                     'face_provider'   => $provider,
                     'face_checked_at' => $now,
-                    'reason'          => null,
+                    'reason'          => $isCompanyOfficeOverride ? 'CHECKOUT_AT_COMPANY_OFFICE' : null,
                     'cancelled'       => false,
                     'cancelled_at'    => null,
                 ]);
@@ -321,10 +359,11 @@ class ChamCongCheckoutController extends BaseController
                     'face_score' => $faceScore,
                 ],
                 'workpoint' => [
-                    'id'         => (int) $targetWorkpoint->id,
-                    'ten'        => $targetWorkpoint->ten,
-                    'ban_kinh_m' => (int) $targetWorkpoint->ban_kinh_m,
+                    'id'         => (int) $finalWorkpoint->id,
+                    'ten'        => $finalWorkpoint->ten,
+                    'ban_kinh_m' => (int) $finalWorkpoint->ban_kinh_m,
                 ],
+                'checkout_mode' => $isCompanyOfficeOverride ? 'company_office_override' : 'session_workpoint',
                 'session' => [
                     'open'            => false,
                     'existing'        => false,
@@ -415,6 +454,24 @@ class ChamCongCheckoutController extends BaseController
         return DiemLamViec::nearest($lat, $lng);
     }
 
+
+    private function resolveCompanyOfficeWorkpoint($at = null): ?DiemLamViec
+    {
+        return DiemLamViec::query()
+            ->fixed()
+            ->availableAt($at)
+            ->whereRaw('UPPER(TRIM(COALESCE(ma_dia_diem, ""))) = ?', [self::COMPANY_OFFICE_CODE])
+            ->first();
+    }
+
+    private function isCompanyOffice(?DiemLamViec $workpoint): bool
+    {
+        if (!$workpoint) {
+            return false;
+        }
+
+        return strtoupper(trim((string) ($workpoint->ma_dia_diem ?? ''))) === self::COMPANY_OFFICE_CODE;
+    }
 
     /**
      * Chuẩn hoá ảnh selfie về JPEG chuẩn để browser hiển thị ổn định.
