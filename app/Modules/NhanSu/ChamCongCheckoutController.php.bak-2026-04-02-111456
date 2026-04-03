@@ -147,16 +147,10 @@ class ChamCongCheckoutController extends BaseController
         }
 
         if ($workpointId && $targetWorkpoint && (int) $workpointId !== (int) $targetWorkpoint->id) {
-            $selectedPoint = DiemLamViec::query()
-                ->availableAt($now)
-                ->find($workpointId);
-
+            $selectedPoint = DiemLamViec::query()->find($workpointId);
             $selectedIsCompanyOffice = $this->isCompanyOffice($selectedPoint);
 
-            // FE/tab cũ có thể giữ selectedWorkpointId đã inactive.
-            // Nếu point FE gửi lên không còn available thì bỏ qua,
-            // tiếp tục xử lý theo phiên mở + office override.
-            if ($selectedPoint && !$selectedIsCompanyOffice) {
+            if (!$selectedIsCompanyOffice) {
                 return $this->respond(false, 'CHECKOUT_WORKPOINT_MISMATCH', [
                     'message' => 'Bạn phải chấm công ra đúng địa điểm của phiên đang mở, hoặc tại [DD001] Văn phòng PHG.',
                     'open_session' => [

@@ -88,7 +88,7 @@ class ChamCongController extends BaseController
         $now = Carbon::now(config('app.timezone'));
 
         // ===== 1) Resolve workpoint =====
-        $diem = $this->resolveWorkpoint($workpointId, $lat, $lng, $now);
+        $diem = $this->resolveWorkpoint($workpointId, $lat, $lng);
         if (!$diem) {
             return $this->respond(false, 'NO_WORKPOINT', [
                 'message' => 'Chưa cấu hình điểm làm việc (geofence).',
@@ -376,17 +376,13 @@ class ChamCongController extends BaseController
     /**
      * Ưu tiên workpoint do client chọn; nếu không có thì fallback nearest
      */
-    private function resolveWorkpoint(?int $workpointId, float $lat, float $lng, $at = null): ?DiemLamViec
+    private function resolveWorkpoint(?int $workpointId, float $lat, float $lng): ?DiemLamViec
     {
-        $at = $at ?: now();
-
         if ($workpointId) {
-            return DiemLamViec::query()
-                ->availableAt($at)
-                ->find($workpointId);
+            return DiemLamViec::query()->find($workpointId);
         }
 
-        return DiemLamViec::nearest($lat, $lng, $at);
+        return DiemLamViec::nearest($lat, $lng);
     }
 
 

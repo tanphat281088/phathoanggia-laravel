@@ -182,43 +182,8 @@ class WorkpointController extends BaseController
         $radius = max(30, min($radius, 5000));
 
         try {
-            $now = now();
-
-            // ===== 1) Nếu đang đứng trong geofence của điểm cố định active => bắt buộc dùng fixed =====
-            $fixedReusable = DiemLamViec::query()
-                ->fixed()
-                ->availableAt($now)
-                ->get()
-                ->map(function (DiemLamViec $point) use ($lat, $lng) {
-                    [$within, $distance] = $point->withinGeofence($lat, $lng);
-                    return [
-                        'point'    => $point,
-                        'within'   => $within,
-                        'distance' => $distance,
-                    ];
-                })
-                ->filter(function (array $row) {
-                    return (bool) $row['within'];
-                })
-                ->sortBy(function (array $row) {
-                    return (int) $row['distance'];
-                })
-                ->first();
-
-            if ($fixedReusable) {
-                /** @var DiemLamViec $fixedPoint */
-                $fixedPoint = $fixedReusable['point'];
-                $distance   = (int) $fixedReusable['distance'];
-
-                return $this->success([
-                    'item'   => $this->toItem($fixedPoint, $distance),
-                    'notice' => 'Bạn đang đứng trong khu vực của một địa điểm cố định. Hệ thống sẽ dùng địa điểm này, không tạo điểm sự kiện mới.',
-                    'reused' => true,
-                ], 'WORKPOINT_REUSED_FIXED_GEOFENCE', 200);
-            }
-
-            // ===== 2) Chống trùng/tái sử dụng địa điểm gần đó =====
-            $reusable = DiemLamViec::findNearbyReusable($lat, $lng, 80, $now);
+            // ===== 1) Chống trùng/tái sử dụng địa điểm gần đó =====
+            $reusable = DiemLamViec::findNearbyReusable($lat, $lng, 80, now());
 
             if ($reusable) {
                 $distance = $reusable->distanceTo($lat, $lng);
@@ -232,7 +197,8 @@ class WorkpointController extends BaseController
                 ], $reusable->isFixed() ? 'WORKPOINT_REUSED_FIXED' : 'WORKPOINT_REUSED_EVENT', 200);
             }
 
-            // ===== 3) Tạo điểm event mới =====
+            // ===== 2) Tạo điểm event mới =====
+            $now = now();
             $wp = new DiemLamViec();
             $wp->ma_dia_diem   = $this->makeEventCode($uid);
             $wp->ten           = $ten;
