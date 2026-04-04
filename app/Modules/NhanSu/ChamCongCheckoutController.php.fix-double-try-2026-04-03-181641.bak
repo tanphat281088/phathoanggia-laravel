@@ -225,6 +225,7 @@ class ChamCongCheckoutController extends BaseController
         }
 
         try {
+        try {
             // ===== 3) Chuẩn hoá ảnh =====
             $binary = null;
 

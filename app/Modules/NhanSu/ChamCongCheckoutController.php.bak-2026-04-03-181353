@@ -17,8 +17,7 @@ use Throwable;
 
 class ChamCongCheckoutController extends BaseController
 {
-    private const CHECKOUT_OVERRIDE_CODE_MIN = 1;
-    private const CHECKOUT_OVERRIDE_CODE_MAX = 16;
+    private const COMPANY_OFFICE_CODE = 'DD001';
     /**
      * POST /nhan-su/cham-cong/checkout
      *
@@ -137,12 +136,11 @@ class ChamCongCheckoutController extends BaseController
         }
 
         // ===== 2) Checkout theo đúng workpoint của phiên đang mở,
-        // nhưng cho phép ngoại lệ checkout tại các địa điểm DD001 -> DD016 =====
-        $targetWorkpoint      = $this->resolveCheckoutWorkpoint($openCheckin, $workpointId, $lat, $lng);
-        $matchedOverridePoint = $this->resolveMatchedAllowedCheckoutOverride($lat, $lng, $now);
-        $nearestOverridePoint = $this->resolveNearestAllowedCheckoutOverride($lat, $lng, $now);
+        // nhưng cho phép ngoại lệ checkout tại [DD001] Văn phòng PHG =====
+        $targetWorkpoint = $this->resolveCheckoutWorkpoint($openCheckin, $workpointId, $lat, $lng);
+        $companyOffice   = $this->resolveCompanyOfficeWorkpoint($now);
 
-        if (!$targetWorkpoint && !$nearestOverridePoint) {
+        if (!$targetWorkpoint && !$companyOffice) {
             return $this->respond(false, 'INVALID_WORKPOINT', [
                 'message' => 'Không xác định được địa điểm chấm công ra cho phiên đang mở.',
             ], 422);
@@ -153,14 +151,14 @@ class ChamCongCheckoutController extends BaseController
                 ->availableAt($now)
                 ->find($workpointId);
 
-            $selectedIsAllowedOverride = $this->isAllowedCheckoutOverridePoint($selectedPoint);
+            $selectedIsCompanyOffice = $this->isCompanyOffice($selectedPoint);
 
             // FE/tab cũ có thể giữ selectedWorkpointId đã inactive.
             // Nếu point FE gửi lên không còn available thì bỏ qua,
-            // tiếp tục xử lý theo phiên mở + override DD001 -> DD016.
-            if ($selectedPoint && !$selectedIsAllowedOverride) {
+            // tiếp tục xử lý theo phiên mở + office override.
+            if ($selectedPoint && !$selectedIsCompanyOffice) {
                 return $this->respond(false, 'CHECKOUT_WORKPOINT_MISMATCH', [
-                    'message' => 'Bạn phải chấm công ra đúng địa điểm của phiên đang mở, hoặc tại các địa điểm DD001 đến DD016.',
+                    'message' => 'Bạn phải chấm công ra đúng địa điểm của phiên đang mở, hoặc tại [DD001] Văn phòng PHG.',
                     'open_session' => [
                         'checkin_id'    => (int) $openCheckin->id,
                         'checked_in_at' => optional($openCheckin->checked_at)->toDateTimeString(),
@@ -172,13 +170,12 @@ class ChamCongCheckoutController extends BaseController
                         'id'  => (int) $workpointId,
                         'ten' => optional($selectedPoint)->ten,
                     ],
-                    'allowed_override_codes' => $this->allowedCheckoutOverrideCodes(),
                 ], 409);
             }
         }
 
         $finalWorkpoint = $targetWorkpoint;
-        $isAllowedOverride = false;
+        $isCompanyOfficeOverride = false;
 
         $within = false;
         $distanceM = null;
@@ -187,34 +184,36 @@ class ChamCongCheckoutController extends BaseController
             [$within, $distanceM] = $targetWorkpoint->withinGeofence($lat, $lng);
         }
 
-        if (!$within && $matchedOverridePoint) {
-            [$overrideWithin, $overrideDistanceM] = $matchedOverridePoint->withinGeofence($lat, $lng);
+        $officeWithin = false;
+        $officeDistanceM = null;
 
-            if ($overrideWithin) {
-                $finalWorkpoint = $matchedOverridePoint;
-                $distanceM = $overrideDistanceM;
-                $within = true;
-                $isAllowedOverride = true;
-            }
+        if ($this->isCompanyOffice($companyOffice)) {
+            [$officeWithin, $officeDistanceM] = $companyOffice->withinGeofence($lat, $lng);
+        }
+
+        if (!$within && $officeWithin) {
+            $finalWorkpoint = $companyOffice;
+            $distanceM = $officeDistanceM;
+            $within = true;
+            $isCompanyOfficeOverride = true;
         }
 
         if (!$within || !$finalWorkpoint) {
             return $this->respond(false, 'OUT_OF_CHECKOUT_RANGE', [
-                'message' => 'Bạn phải chấm công ra trong bán kính hợp lệ của địa điểm đã chấm công vào, hoặc tại các địa điểm DD001 đến DD016.',
+                'message' => 'Bạn phải chấm công ra trong bán kính hợp lệ của địa điểm đã chấm công vào, hoặc tại [DD001] Văn phòng PHG.',
                 'distance_m' => (int) ($distanceM ?? 0),
                 'ban_kinh_m' => (int) ($targetWorkpoint?->ban_kinh_m ?? 0),
                 'workpoint'  => [
                     'id'  => (int) ($targetWorkpoint?->id ?? 0),
                     'ten' => $targetWorkpoint?->ten,
                 ],
-                'override_workpoint' => $nearestOverridePoint ? [
-                    'id'          => (int) $nearestOverridePoint->id,
-                    'ma_dia_diem' => $nearestOverridePoint->ma_dia_diem,
-                    'ten'         => $nearestOverridePoint->ten,
-                    'ban_kinh_m'  => (int) $nearestOverridePoint->ban_kinh_m,
-                    'distance_m'  => (int) $nearestOverridePoint->distanceTo($lat, $lng),
+                'company_office' => $companyOffice ? [
+                    'id'         => (int) $companyOffice->id,
+                    'ma_dia_diem'=> $companyOffice->ma_dia_diem,
+                    'ten'        => $companyOffice->ten,
+                    'ban_kinh_m' => (int) $companyOffice->ban_kinh_m,
+                    'distance_m' => is_null($officeDistanceM) ? null : (int) $officeDistanceM,
                 ] : null,
-                'allowed_override_codes' => $this->allowedCheckoutOverrideCodes(),
                 'open_session' => [
                     'checkin_id'    => (int) $openCheckin->id,
                     'checked_in_at' => optional($openCheckin->checked_at)->toDateTimeString(),
@@ -290,7 +289,7 @@ class ChamCongCheckoutController extends BaseController
                 $binary,
                 $faceScore,
                 $provider,
-                $isAllowedOverride
+                $isCompanyOfficeOverride
             ) {
                 $disk = Storage::disk('public');
                 $dir  = 'attendance/' . $userId;
@@ -319,7 +318,7 @@ class ChamCongCheckoutController extends BaseController
                     'face_score'      => $faceScore,
                     'face_provider'   => $provider,
                     'face_checked_at' => $now,
-                    'reason'          => $isAllowedOverride ? 'CHECKOUT_AT_ALLOWED_OVERRIDE_POINT' : null,
+                    'reason'          => $isCompanyOfficeOverride ? 'CHECKOUT_AT_COMPANY_OFFICE' : null,
                     'cancelled'       => false,
                     'cancelled_at'    => null,
                 ]);
@@ -370,7 +369,7 @@ class ChamCongCheckoutController extends BaseController
                     'ten'        => $finalWorkpoint->ten,
                     'ban_kinh_m' => (int) $finalWorkpoint->ban_kinh_m,
                 ],
-                'checkout_mode' => $isAllowedOverride ? 'allowed_override_workpoint' : 'session_workpoint',
+                'checkout_mode' => $isCompanyOfficeOverride ? 'company_office_override' : 'session_workpoint',
                 'session' => [
                     'open'            => false,
                     'existing'        => false,
@@ -462,68 +461,22 @@ class ChamCongCheckoutController extends BaseController
     }
 
 
-    private function allowedCheckoutOverrideCodes(): array
-    {
-        return array_map(
-            fn (int $n) => 'DD' . str_pad((string) $n, 3, '0', STR_PAD_LEFT),
-            range(self::CHECKOUT_OVERRIDE_CODE_MIN, self::CHECKOUT_OVERRIDE_CODE_MAX)
-        );
-    }
-
-    private function isAllowedCheckoutOverrideCode(?string $code): bool
-    {
-        if (!$code) {
-            return false;
-        }
-
-        $code = strtoupper(trim((string) $code));
-
-        if (!preg_match('/^DD(\d{3})$/', $code, $m)) {
-            return false;
-        }
-
-        $num = (int) $m[1];
-
-        return $num >= self::CHECKOUT_OVERRIDE_CODE_MIN
-            && $num <= self::CHECKOUT_OVERRIDE_CODE_MAX;
-    }
-
-    private function resolveNearestAllowedCheckoutOverride(float $lat, float $lng, $at = null): ?DiemLamViec
+    private function resolveCompanyOfficeWorkpoint($at = null): ?DiemLamViec
     {
         return DiemLamViec::query()
             ->fixed()
             ->availableAt($at)
-            ->get()
-            ->filter(fn (DiemLamViec $point) => $this->isAllowedCheckoutOverridePoint($point))
-            ->sortBy(fn (DiemLamViec $point) => $point->distanceTo($lat, $lng))
+            ->whereRaw('UPPER(TRIM(COALESCE(ma_dia_diem, ""))) = ?', [self::COMPANY_OFFICE_CODE])
             ->first();
     }
 
-    private function resolveMatchedAllowedCheckoutOverride(float $lat, float $lng, $at = null): ?DiemLamViec
-    {
-        return DiemLamViec::query()
-            ->fixed()
-            ->availableAt($at)
-            ->get()
-            ->filter(fn (DiemLamViec $point) => $this->isAllowedCheckoutOverridePoint($point))
-            ->map(function (DiemLamViec $point) use ($lat, $lng) {
-                [$within, $distance] = $point->withinGeofence($lat, $lng);
-                $point->override_distance_m = $distance;
-                $point->override_within = $within;
-                return $point;
-            })
-            ->filter(fn (DiemLamViec $point) => (bool) ($point->override_within ?? false))
-            ->sortBy(fn (DiemLamViec $point) => (int) ($point->override_distance_m ?? PHP_INT_MAX))
-            ->first();
-    }
-
-    private function isAllowedCheckoutOverridePoint(?DiemLamViec $workpoint): bool
+    private function isCompanyOffice(?DiemLamViec $workpoint): bool
     {
         if (!$workpoint) {
             return false;
         }
 
-        return $this->isAllowedCheckoutOverrideCode($workpoint->ma_dia_diem ?? null);
+        return strtoupper(trim((string) ($workpoint->ma_dia_diem ?? ''))) === self::COMPANY_OFFICE_CODE;
     }
 
     /**
